@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	bestcandidate "github.com/BernatRubio/best-candidate"
+	"github.com/BernatRubio/best-candidate/internal/dotenv"
 	"github.com/BernatRubio/best-candidate/internal/joboffer"
 	"github.com/BernatRubio/best-candidate/internal/llm"
 	"github.com/BernatRubio/best-candidate/internal/profile"
@@ -25,6 +26,12 @@ import (
 var errDropped = errors.New("some statements could not be verified and were removed")
 
 func main() {
+	// API keys may live in a .env file in the folder the command is run from;
+	// variables already set in the shell take precedence.
+	if err := dotenv.Load(".env"); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not read .env:", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 

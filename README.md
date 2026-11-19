@@ -19,6 +19,10 @@ go build -o best-candidate ./cmd/best-candidate
 export ANTHROPIC_API_KEY=...
 ```
 
+Instead of exporting keys in every shell, you can put them in a `.env` file in the folder you run the
+command from (for example `BC_API_KEY=...`). It is git-ignored, and variables already set in the shell
+take precedence.
+
 ## Usage
 
 Create your profile once and fill it in:
