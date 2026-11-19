@@ -36,6 +36,7 @@ type Experience struct {
 
 // Education is one study entry in the CV.
 type Education struct {
+	Relevance   int      `json:"relevance" jsonschema:"description=How directly this degree matches the field the job needs from 0 (unrelated) to 10 (exactly that field); the program lists the degrees from the highest score to the lowest"`
 	Degree      string   `json:"degree"`
 	Institution string   `json:"institution"`
 	Period      string   `json:"period" jsonschema:"description=Dates exactly as the profile states them; empty string if none"`

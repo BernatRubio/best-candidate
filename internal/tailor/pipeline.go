@@ -91,6 +91,7 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	if err != nil {
 		return nil, err
 	}
+	sortEducation(docs, analysis)
 
 	res := &Result{Analysis: analysis, Lang: lang}
 	var verifierCoverage []Coverage
@@ -119,6 +120,7 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 		if err != nil {
 			return nil, err
 		}
+		sortEducation(docs, analysis)
 	}
 
 	res.Warnings = append(res.Warnings, groundIdentity(g, docs)...)

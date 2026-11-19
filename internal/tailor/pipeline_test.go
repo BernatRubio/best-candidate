@@ -227,7 +227,7 @@ func TestSchemaIsStrict(t *testing.T) {
 // asked for things the renderer ignores.
 func TestPromptMatchesSchema(t *testing.T) {
 	schema := string(llm.SchemaFor[Documents]())
-	for _, v := range []string{LayoutBullets, PlaceAfterEducation, "projects", "projects_first", "skills", "languages", "link"} {
+	for _, v := range []string{LayoutBullets, PlaceAfterEducation, "projects", "projects_first", "skills", "languages", "link", "relevance"} {
 		if !strings.Contains(tailorPrompt, v) {
 			t.Errorf("tailor prompt does not mention %q", v)
 		}
@@ -560,5 +560,76 @@ func TestCourseworkRemarkTriggersRepair(t *testing.T) {
 	}
 	if got := res.Docs.CV.Education[0].Details; len(got) != 2 || strings.Contains(got[0].Text, "(") {
 		t.Fatalf("details = %+v", got)
+	}
+}
+
+func eduEntry(degree string, relevance int, details ...string) Education {
+	e := Education{Degree: degree, Institution: "Northfield", Relevance: relevance}
+	for _, d := range details {
+		e.Details = append(e.Details, Claim{Text: d})
+	}
+	return e
+}
+
+func degrees(docs *Documents) string {
+	var out []string
+	for _, e := range docs.CV.Education {
+		out = append(out, e.Degree)
+	}
+	return strings.Join(out, ",")
+}
+
+func TestSortEducationByRelevance(t *testing.T) {
+	docs := minimalDocs()
+	docs.CV.Education = []Education{eduEntry("Media", 3), eduEntry("Physics", 5), eduEntry("Computing", 9), eduEntry("Law", 5)}
+	sortEducation(&docs, JobAnalysis{})
+	// Highest first; equal scores keep the order the model wrote them in.
+	if got := degrees(&docs); got != "Computing,Physics,Law,Media" {
+		t.Fatalf("order = %s", got)
+	}
+}
+
+func TestSortEducationTiesUseOfferKeywords(t *testing.T) {
+	docs := minimalDocs()
+	docs.CV.Education = []Education{
+		eduEntry("Media", 5, "Relevant coursework: Video Processing"),
+		eduEntry("Computing", 5, "Relevant coursework: Python, Databases, Algorithms"),
+	}
+	sortEducation(&docs, JobAnalysis{Keywords: []string{"Python", "Databases"}, MustHave: []string{"Python"}})
+	if got := degrees(&docs); got != "Computing,Media" {
+		t.Fatalf("order = %s", got)
+	}
+	// With no keyword signal either, the model's order is kept.
+	docs.CV.Education = []Education{eduEntry("A", 5), eduEntry("B", 5)}
+	sortEducation(&docs, JobAnalysis{Keywords: []string{"Python"}})
+	if got := degrees(&docs); got != "A,B" {
+		t.Fatalf("order = %s", got)
+	}
+}
+
+// The model lists the unrelated degree first (the order of the profile); the
+// pipeline puts the relevant one first before anything else looks at the
+// entries.
+func TestRunOrdersDegreesByRelevance(t *testing.T) {
+	docs := baseDocs()
+	docs.CV.Education = []Education{
+		{Relevance: 2, Degree: "Media Engineering", Institution: "Northfield", Period: "2020 - 2025",
+			Sources: []string{"Backend developer, Initech (2020-2023)"}},
+		{Relevance: 9, Degree: "Computer Science", Institution: "Northfield", Period: "2020 - 2025",
+			Sources: []string{"Backend developer, Initech (2020-2023)"}},
+	}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), func(llm.Request) (json.RawMessage, error) {
+		// The reviewer sees the claims in the sorted order.
+		return allSupported(Documents{CV: CV{Education: []Education{docs.CV.Education[1], docs.CV.Education[0]}}})(llm.Request{})
+	})
+	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := degrees(&res.Docs); got != "Computer Science,Media Engineering" {
+		t.Fatalf("order = %s", got)
+	}
+	if !strings.Contains(fake.Calls[2].User, "id: cv.education[0]\ntext: Computer Science") {
+		t.Fatalf("the verifier must see the sorted order:\n%s", fake.Calls[2].User)
 	}
 }
