@@ -28,16 +28,15 @@ func sample() *tailor.Result {
 					Bullets: []tailor.Claim{{Text: "Vaig crear APIs REST en Go per a l'equip de facturació."}},
 				}},
 				Education: []tailor.Education{{Degree: "Enginyeria Informàtica", Institution: "UPC", Period: "2016-2020"}},
+				Skills:    []tailor.Claim{{Text: "Llenguatges: Go, Python"}, {Text: "Eines: Git, Docker"}},
+				Languages: []tailor.Claim{{Text: "Català (nadiu)"}, {Text: "Anglès (B2)"}},
+				Projects: []tailor.Project{{
+					Name: "Orion", Link: "https://github.com/ada/orion",
+					Details: []tailor.Claim{{Text: "Algorisme de descompressió en temps real. Documentació a https://example.com/docs."}},
+				}},
+				ProjectsFirst: true,
 				Sections: []tailor.Section{
-					{Title: "Projectes", Layout: tailor.LayoutBullets, Placement: tailor.PlaceBeforeExperience, Items: []tailor.Claim{
-						{Text: "AquaGuard: algorisme de descompressió. Codi a https://github.com/ada/aquaguard."},
-					}},
-					{Title: "Tecnologies", Layout: tailor.LayoutLines, Placement: tailor.PlaceAfterEducation, Items: []tailor.Claim{
-						{Text: "Llenguatges: Go, Python"}, {Text: "Eines: Git, Docker"},
-					}},
-					{Title: "Idiomes", Layout: tailor.LayoutInline, Placement: tailor.PlaceAfterEducation, Items: []tailor.Claim{
-						{Text: "Català (nadiu)"}, {Text: "Anglès (B2)"},
-					}},
+					{Title: "Certificacions", Layout: tailor.LayoutBullets, Placement: tailor.PlaceAfterEducation, Items: []tailor.Claim{{Text: "Cambridge B2 First"}}},
 				},
 			},
 			Letter: tailor.Letter{
@@ -186,8 +185,8 @@ func TestLinksAreClickable(t *testing.T) {
 			}
 		}
 	}
-	// A URL written inside a bullet is linked too (no trailing full stop).
-	if got := pdfURIs(t, filepath.Join(dir, "cv.pdf")); !got["https://github.com/ada/aquaguard"] {
+	// A URL written inside a bullet is linked too (without the trailing full stop).
+	if got := pdfURIs(t, filepath.Join(dir, "cv.pdf")); !got["https://example.com/docs"] {
 		t.Errorf("body URL not linked: %v", got)
 	}
 }
@@ -292,5 +291,36 @@ func TestVeryLongCVFlowsToSecondPage(t *testing.T) {
 	dir := compileSample(t, res)
 	if n := pdfPages(t, filepath.Join(dir, "cv.pdf")); n < 2 {
 		t.Errorf("cv.pdf has %d page(s); a 60-bullet CV must continue on a second page", n)
+	}
+}
+
+// A CV with nothing optional filled in must still render (no null lists, no
+// empty headings).
+func TestMinimalCVRenders(t *testing.T) {
+	res := &tailor.Result{Lang: "en", Docs: tailor.Documents{
+		CV:     tailor.CV{Name: "Ada"},
+		Letter: tailor.Letter{Greeting: "Hello", Closing: "Bye", Signature: "Ada"},
+	}}
+	dir := compileSample(t, res)
+	if n := pdfPages(t, filepath.Join(dir, "cv.pdf")); n != 1 {
+		t.Errorf("minimal cv has %d pages", n)
+	}
+}
+
+func TestFolderName(t *testing.T) {
+	d := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	cases := []struct{ company, role, want string }{
+		{"Acme", "Software Engineer Intern", "acme-software-engineer-intern-2026-11-19"},
+		// A chatty model answer must not push the date out of the name.
+		{"Acme (part of Globex & Initech Holdings)",
+			"Software Engineer Intern - Game Studio (position overview refers to the role as Mobile Engineer Intern)",
+			"acme-software-engineer-intern-game-2026-11-19"},
+		{"", "", "2026-11-19"},
+		{"Acme", "", "acme-2026-11-19"},
+	}
+	for _, c := range cases {
+		if got := FolderName(c.company, c.role, d); got != c.want {
+			t.Errorf("FolderName(%q, %q) = %q, want %q", c.company, c.role, got, c.want)
+		}
 	}
 }

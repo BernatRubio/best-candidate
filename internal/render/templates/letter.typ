@@ -29,7 +29,7 @@
 
     #v(1.2em * gap)
 
-    #if l.recipient != "" [
+    #if l.recipient != "" and not l.recipient.contains("_") [
       #l.recipient
       #v(0.6em * gap)
     ]

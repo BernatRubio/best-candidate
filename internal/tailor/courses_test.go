@@ -5,19 +5,21 @@ import (
 	"strings"
 	"testing"
 
+	bestcandidate "github.com/BernatRubio/best-candidate"
 	"github.com/BernatRubio/best-candidate/internal/llm"
+	"github.com/BernatRubio/best-candidate/internal/profile"
 )
 
 const eduProfile = testProfile + `
 ## Education
 
-### Bachelor's Degree in Computer Science Engineering, UPF (2020 - 2025)
+### Bachelor's Degree in Computer Science Engineering, Northfield (2020 - 2025)
 
 - Programming and software engineering: Introduction to Programming, Object-Oriented Programming, Data Structures and Algorithms I and II, Software Engineering
 - Graphics: Computer Graphics, Advanced Computer Graphics
 - Systems: Operating Systems, Networks, Introduction to Parallel and Distributed Programming (OpenMP, OpenMPI, CUDA)
 
-### Bachelor's Degree in Audiovisual Systems Engineering, UPF (2020 - 2025)
+### Bachelor's Degree in Media Engineering, Northfield (2020 - 2025)
 
 - Image and video: Image Processing, Video Processing, Computer Graphics, Advanced Computer Graphics
 - Programming: Introduction to Programming, Object-Oriented Programming, Data Structures and Algorithms I and II
@@ -25,7 +27,7 @@ const eduProfile = testProfile + `
 
 ## Languages
 
-- Catalan: native
+- Spanish: native
 `
 
 func claims(texts ...string) []Claim {
@@ -39,10 +41,10 @@ func claims(texts ...string) []Claim {
 func eduDocs(cs, av []Claim) *Documents {
 	d := baseDocs()
 	d.CV.Education = []Education{
-		{Degree: "Bachelor's Degree in Computer Science Engineering", Institution: "UPF", Period: "2020 - 2025",
-			Sources: []string{"Bachelor's Degree in Computer Science Engineering, UPF (2020 - 2025)"}, Details: cs},
-		{Degree: "Bachelor's Degree in Audiovisual Systems Engineering", Institution: "UPF", Period: "2020 - 2025",
-			Sources: []string{"Bachelor's Degree in Audiovisual Systems Engineering, UPF (2020 - 2025)"}, Details: av},
+		{Degree: "Bachelor's Degree in Computer Science Engineering", Institution: "Northfield", Period: "2020 - 2025",
+			Sources: []string{"Bachelor's Degree in Computer Science Engineering, Northfield (2020 - 2025)"}, Details: cs},
+		{Degree: "Bachelor's Degree in Media Engineering", Institution: "Northfield", Period: "2020 - 2025",
+			Sources: []string{"Bachelor's Degree in Media Engineering, Northfield (2020 - 2025)"}, Details: av},
 	}
 	return &d
 }
@@ -66,7 +68,7 @@ func TestCourseCatalog(t *testing.T) {
 			t.Errorf("catalog lacks %q: %v", want, cat)
 		}
 	}
-	for _, bad := range []string{"python", "catalan", "wireless sensor networks 9 7"} {
+	for _, bad := range []string{"python", "spanish", "wireless sensor networks 9 7"} {
 		if _, ok := index[bad]; ok {
 			t.Errorf("catalog must not contain %q (outside Education or a grade line)", bad)
 		}
@@ -241,5 +243,25 @@ func TestPersistentSharedCourseIsDeduplicated(t *testing.T) {
 	}
 	if len(res.Dropped) != 0 {
 		t.Fatalf("a repeated course is not a false claim; nothing should be dropped: %+v", res.Dropped)
+	}
+}
+
+// The profile template documents the course-list format; keep its example
+// parseable so the documentation cannot drift from the code.
+func TestExampleProfileCourseListsAreParsed(t *testing.T) {
+	cat := courseCatalog(profile.Clean(bestcandidate.ExampleProfile))
+	have := map[string]bool{}
+	for _, c := range cat {
+		have[c] = true
+	}
+	for _, want := range []string{"algorithms", "operating systems", "linear algebra", "statistics"} {
+		if !have[want] {
+			t.Errorf("template course %q is not in the catalog: %v", want, cat)
+		}
+	}
+	for _, grade := range []string{"databases 9 4", "statistics 9 1"} {
+		if have[grade] {
+			t.Errorf("a course written with a grade must not be a catalog entry: %q", grade)
+		}
 	}
 }

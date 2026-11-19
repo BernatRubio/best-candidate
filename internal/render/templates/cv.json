@@ -7,6 +7,25 @@
       "text": "Placeholder summary so the editor can preview the template.",
       "sources": []
     },
+    "skills": [
+      { "text": "Languages: Skill one, Skill two", "sources": [] },
+      { "text": "Tools: Tool one, Tool two", "sources": [] }
+    ],
+    "languages": [
+      { "text": "Language one (native)", "sources": [] },
+      { "text": "Language two (B2)", "sources": [] }
+    ],
+    "projects": [
+      {
+        "name": "Project name",
+        "link": "https://github.com/you/project",
+        "sources": [],
+        "details": [
+          { "text": "One line about what was built and with what.", "sources": [] }
+        ]
+      }
+    ],
+    "projects_first": false,
     "experience": [
       {
         "title": "Job title",
@@ -29,33 +48,6 @@
         "details": []
       }
     ],
-    "sections": [
-      {
-        "title": "Projects",
-        "layout": "bullets",
-        "placement": "before_experience",
-        "items": [
-          { "text": "Project name: one line about it. Code at https://github.com/you/project", "sources": [] }
-        ]
-      },
-      {
-        "title": "Skills",
-        "layout": "lines",
-        "placement": "after_education",
-        "items": [
-          { "text": "Languages: Skill one, Skill two", "sources": [] },
-          { "text": "Tools: Tool one, Tool two", "sources": [] }
-        ]
-      },
-      {
-        "title": "Languages",
-        "layout": "inline",
-        "placement": "after_education",
-        "items": [
-          { "text": "Language one (native)", "sources": [] },
-          { "text": "Language two (B2)", "sources": [] }
-        ]
-      }
-    ]
+    "sections": []
   }
 }

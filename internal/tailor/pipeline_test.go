@@ -222,14 +222,22 @@ func TestSchemaIsStrict(t *testing.T) {
 	}
 }
 
-// The prompt tells the model which layout and placement values exist: they must
-// match the schema, or the model is asked for values the renderer ignores.
-func TestPromptMatchesSchemaEnums(t *testing.T) {
-	for _, v := range []string{LayoutInline, LayoutLines, LayoutBullets, PlaceBeforeExperience, PlaceAfterEducation} {
+// The prompt names the values the model should use for extra sections, and the
+// dedicated fields it must fill; they must exist in the schema, or the model is
+// asked for things the renderer ignores.
+func TestPromptMatchesSchema(t *testing.T) {
+	schema := string(llm.SchemaFor[Documents]())
+	for _, v := range []string{LayoutBullets, PlaceAfterEducation, "projects", "projects_first", "skills", "languages", "link"} {
 		if !strings.Contains(tailorPrompt, v) {
 			t.Errorf("tailor prompt does not mention %q", v)
 		}
-		if !strings.Contains(string(llm.SchemaFor[Documents]()), v) {
+		if !strings.Contains(schema, v) {
+			t.Errorf("schema does not contain %q", v)
+		}
+	}
+	// The renderer still understands every layout and placement.
+	for _, v := range []string{LayoutInline, LayoutLines, LayoutBullets, PlaceBeforeExperience, PlaceAfterEducation} {
+		if !strings.Contains(schema, v) {
 			t.Errorf("schema does not contain %q", v)
 		}
 	}
@@ -272,13 +280,13 @@ func TestRefersToOtherEntry(t *testing.T) {
 func TestCrossReferenceTriggersRepair(t *testing.T) {
 	bad := baseDocs()
 	bad.CV.Education = []Education{{
-		Degree: "Bachelor's Degree in Audiovisual Systems Engineering", Institution: "UPF", Period: "2020 - 2025",
+		Degree: "Bachelor's Degree in Media Engineering", Institution: "Northfield", Period: "2020 - 2025",
 		Sources: []string{"Backend developer, Initech (2020-2023)"},
 		Details: []Claim{{Text: "Also taught entirely in English", Sources: []string{"Go, PostgreSQL, Docker"}}},
 	}}
 	fixed := baseDocs()
 	fixed.CV.Education = []Education{{
-		Degree: "Bachelor's Degree in Audiovisual Systems Engineering", Institution: "UPF", Period: "2020 - 2025",
+		Degree: "Bachelor's Degree in Media Engineering", Institution: "Northfield", Period: "2020 - 2025",
 		Sources: []string{"Backend developer, Initech (2020-2023)"},
 		Details: []Claim{{Text: "Relevant coursework: Databases", Sources: []string{"Go, PostgreSQL, Docker"}}},
 	}}
@@ -306,8 +314,8 @@ func TestRankingMustBeInProfile(t *testing.T) {
 	profile := testProfile + "\n- Top 25%\n"
 	docs := baseDocs()
 	docs.CV.Education = []Education{
-		{Degree: "A", Institution: "UPF", Ranking: "Top 25%", Sources: []string{"Top 25%"}},
-		{Degree: "B", Institution: "UPF", Ranking: "Top 3%", Sources: []string{"Top 25%"}},
+		{Degree: "A", Institution: "Northfield", Ranking: "Top 25%", Sources: []string{"Top 25%"}},
+		{Degree: "B", Institution: "Northfield", Ranking: "Top 3%", Sources: []string{"Top 25%"}},
 	}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
 	res, err := Run(context.Background(), fake, profile, testOffer, Options{})
@@ -333,10 +341,224 @@ func TestRankingMustBeInProfile(t *testing.T) {
 
 func TestEducationHeaderClaimIncludesRanking(t *testing.T) {
 	docs := baseDocs()
-	docs.CV.Education = []Education{{Degree: "A", Institution: "UPF", Period: "2020 - 2025", Ranking: "Top 25%"}}
+	docs.CV.Education = []Education{{Degree: "A", Institution: "Northfield", Period: "2020 - 2025", Ranking: "Top 25%"}}
 	for _, c := range docs.claims() {
 		if c.ID == "cv.education[0]" && !strings.Contains(c.Text, "Top 25%") {
 			t.Fatalf("header claim must carry the ranking so it is verified: %q", c.Text)
 		}
+	}
+}
+
+const fillProfile = `# Ada Example
+ada@example.com
+https://github.com/ada/orion
+
+## Skills
+
+- Programming: Go, SQL
+- Tools: Git, Docker
+- Used at Initech: Postgres, Kafka
+
+## Languages
+
+- Spanish: native
+- English: B2 (Cambridge)
+- Studied both degrees entirely in English
+`
+
+func minimalDocs() Documents {
+	return Documents{
+		CV:     CV{Name: "Ada Example", Contact: []string{"ada@example.com"}},
+		Letter: Letter{Greeting: "Dear team,", Closing: "Regards,", Signature: "Ada Example"},
+	}
+}
+
+// A model that leaves skills and languages empty still gets them, taken from
+// the profile with their exact lines as evidence.
+func TestEmptySkillsAndLanguagesAreFilledFromProfile(t *testing.T) {
+	docs := minimalDocs()
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	skills, langs := res.Docs.CV.Skills, res.Docs.CV.Languages
+	if len(skills) != 3 || skills[0].Text != "Programming: Go, SQL" || skills[0].Sources[0] != "Programming: Go, SQL" {
+		t.Fatalf("skills = %+v", skills)
+	}
+	if len(langs) != 2 || langs[0].Text != "Spanish (native)" || langs[1].Text != "English (B2, Cambridge)" {
+		t.Fatalf("languages = %+v (the remark line must be skipped)", langs)
+	}
+	joined := strings.Join(res.Warnings, " | ")
+	if !strings.Contains(joined, "Skills block") || !strings.Contains(joined, "Languages block") {
+		t.Fatalf("warnings = %v", res.Warnings)
+	}
+}
+
+// The model's own skills and languages are never overwritten.
+func TestModelSkillsAreKept(t *testing.T) {
+	docs := minimalDocs()
+	docs.CV.Skills = []Claim{{Text: "Programming: Go", Sources: []string{"Programming: Go, SQL"}}}
+	docs.CV.Languages = []Claim{{Text: "English (B2, Cambridge)", Sources: []string{"English: B2 (Cambridge)"}}}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Docs.CV.Skills) != 1 || len(res.Docs.CV.Languages) != 1 {
+		t.Fatalf("model output replaced: %+v %+v", res.Docs.CV.Skills, res.Docs.CV.Languages)
+	}
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "block") {
+			t.Fatalf("no fill-in warning expected: %v", w)
+		}
+	}
+}
+
+func TestProjectLinkMustBeInProfile(t *testing.T) {
+	docs := minimalDocs()
+	docs.CV.Projects = []Project{
+		{Name: "Orion", Link: "https://github.com/ada/orion", Sources: []string{"https://github.com/ada/orion"}},
+		{Name: "Other", Link: "https://made-up.example/x", Sources: []string{"https://github.com/ada/orion"}},
+	}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Docs.CV.Projects[0].Link == "" || res.Docs.CV.Projects[1].Link != "" {
+		t.Fatalf("links = %q / %q", res.Docs.CV.Projects[0].Link, res.Docs.CV.Projects[1].Link)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, " "), "made-up.example") {
+		t.Fatalf("no warning for the invented link: %v", res.Warnings)
+	}
+}
+
+// When the writer returns no coverage at all, the fact-checker's assessment is
+// used, and its evidence quotes are still checked against the profile.
+func TestVerifierCoverageIsUsed(t *testing.T) {
+	docs := minimalDocs() // no coverage from the writer
+	verify := func(req llm.Request) (json.RawMessage, error) {
+		if !strings.Contains(req.User, "must have: Go") || !strings.Contains(req.User, "must have: Kubernetes") {
+			t.Errorf("verifier was not given the requirements:\n%s", req.User)
+		}
+		return json.Marshal(VerificationReport{Coverage: []Coverage{
+			{Requirement: "Go", Covered: true, Evidence: "Programming: Go, SQL"},
+			{Requirement: "Kubernetes", Covered: true, Evidence: "Ran Kubernetes clusters"},
+		}})
+	}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), verify)
+	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Docs.Coverage) != 2 {
+		t.Fatalf("coverage = %+v", res.Docs.Coverage)
+	}
+	for _, c := range res.Docs.Coverage {
+		switch c.Requirement {
+		case "Go":
+			if !c.Covered {
+				t.Error("Go should be covered")
+			}
+		case "Kubernetes":
+			if c.Covered {
+				t.Error("an invented evidence quote must downgrade Kubernetes")
+			}
+		}
+	}
+}
+
+func TestSchemaHasDedicatedBlocks(t *testing.T) {
+	schema := string(llm.SchemaFor[Documents]())
+	for _, key := range []string{`"projects"`, `"skills"`, `"languages"`, `"projects_first"`} {
+		if !strings.Contains(schema, key) {
+			t.Errorf("schema lacks %s", key)
+		}
+	}
+}
+
+func TestCleanEducationTitles(t *testing.T) {
+	docs := minimalDocs()
+	docs.CV.Education = []Education{
+		{Degree: "Bachelor's Degree in Computer Science Engineering, Northfield (2020 - 2025)", Institution: "Northfield School of Engineering", Period: "2020 - 2025"},
+		{Degree: "Master's Degree in Mobile Programming (2026 - Present)", Institution: "Example Institute", Period: "2026 - Present"},
+		{Degree: "Bachelor's Degree in Media Engineering", Institution: "Northfield", Period: "2020 - 2025"},
+		{Degree: "Degree in Physics, Optics (Advanced)", Institution: "Northfield", Period: "2019 - 2023"}, // not an institution: untouched
+	}
+	cleanEducationTitles(&docs)
+	want := []string{
+		"Bachelor's Degree in Computer Science Engineering",
+		"Master's Degree in Mobile Programming",
+		"Bachelor's Degree in Media Engineering",
+		"Degree in Physics, Optics (Advanced)",
+	}
+	for i, w := range want {
+		if got := docs.CV.Education[i].Degree; got != w {
+			t.Errorf("degree %d = %q, want %q", i, got, w)
+		}
+	}
+}
+
+func TestCleanRecipient(t *testing.T) {
+	cases := []struct{ in, company, want string }{
+		{"hiring_team", "Acme", "Acme"},
+		{"hiring_team", "", ""},
+		{"HR_Department", "Acme", "Acme"},
+		{"Acme Hiring Team", "Acme", "Acme Hiring Team"},
+		{"Acme", "Acme", "Acme"},
+		{"", "Acme", ""},
+	}
+	for _, c := range cases {
+		docs := minimalDocs()
+		docs.Letter.Recipient = c.in
+		cleanRecipient(&docs, JobAnalysis{Company: c.company})
+		if docs.Letter.Recipient != c.want {
+			t.Errorf("cleanRecipient(%q, company %q) = %q, want %q", c.in, c.company, docs.Letter.Recipient, c.want)
+		}
+	}
+}
+
+func TestCourseworkLeadRemark(t *testing.T) {
+	for text, want := range map[string]bool{
+		"Relevant coursework (degree studied entirely in English): Data Structures, Graphics": true,
+		"Relevant courses (taught in English): Databases":                                     true,
+		"Relevant coursework: Data Structures (Python), Graphics":                             false,
+		"Taught entirely in English":                                                          false,
+		"Highest grades (9.0 or above): Graphics 9.5":                                         false,
+	} {
+		if got := courseworkLeadHasRemark(text); got != want {
+			t.Errorf("courseworkLeadHasRemark(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
+
+// A coursework line with a remark in its heading is sent back for repair.
+func TestCourseworkRemarkTriggersRepair(t *testing.T) {
+	bad := baseDocs()
+	bad.CV.Education = []Education{{
+		Degree: "Bachelor's Degree in Computer Science Engineering", Institution: "Northfield", Period: "2020 - 2025",
+		Sources: []string{"Backend developer, Initech (2020-2023)"},
+		Details: []Claim{{Text: "Relevant coursework (degree studied entirely in English): Databases", Sources: []string{"Go, PostgreSQL, Docker"}}},
+	}}
+	fixed := baseDocs()
+	fixed.CV.Education = []Education{{
+		Degree: "Bachelor's Degree in Computer Science Engineering", Institution: "Northfield", Period: "2020 - 2025",
+		Sources: []string{"Backend developer, Initech (2020-2023)"},
+		Details: []Claim{
+			{Text: "Relevant coursework: Databases", Sources: []string{"Go, PostgreSQL, Docker"}},
+			{Text: "Taught entirely in English", Sources: []string{"Go, PostgreSQL, Docker"}},
+		},
+	}}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(bad), allSupported(bad), llm.Reply(fixed), allSupported(fixed))
+	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fake.Calls[3].User, "own line") {
+		t.Fatalf("repair prompt lacks the problem:\n%s", fake.Calls[3].User)
+	}
+	if got := res.Docs.CV.Education[0].Details; len(got) != 2 || strings.Contains(got[0].Text, "(") {
+		t.Fatalf("details = %+v", got)
 	}
 }

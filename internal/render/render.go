@@ -191,9 +191,27 @@ func nn[T any](s []T) []T {
 
 // nonNil replaces nil slices with empty ones so the JSON has [] rather than
 // null, which the Typst templates cannot take the length of.
+func nonNilClaims(cs []tailor.Claim) []tailor.Claim {
+	out := make([]tailor.Claim, 0, len(cs))
+	for _, c := range cs {
+		c.Sources = nn(c.Sources)
+		out = append(out, c)
+	}
+	return out
+}
+
 func nonNil(cv tailor.CV, l tailor.Letter) (tailor.CV, tailor.Letter) {
 	cv.Contact = nn(cv.Contact)
 	cv.Summary.Sources = nn(cv.Summary.Sources)
+	cv.Skills = nonNilClaims(cv.Skills)
+	cv.Languages = nonNilClaims(cv.Languages)
+	projs := make([]tailor.Project, 0, len(cv.Projects))
+	for _, p := range cv.Projects {
+		p.Sources = nn(p.Sources)
+		p.Details = nonNilClaims(p.Details)
+		projs = append(projs, p)
+	}
+	cv.Projects = projs
 	exps := make([]tailor.Experience, 0, len(cv.Experience))
 	for _, e := range cv.Experience {
 		e.Sources = nn(e.Sources)
@@ -274,4 +292,33 @@ func CleanContact(lines []string) []string {
 		}
 	}
 	return out
+}
+
+var parentheses = regexp.MustCompile(`\([^)]*\)`)
+
+// shortSlug slugs s without parenthetical remarks and cuts it to at most max
+// characters at a word boundary.
+func shortSlug(s string, max int) string {
+	slug := Slug(parentheses.ReplaceAllString(s, " "))
+	if len(slug) <= max {
+		return slug
+	}
+	cut := slug[:max]
+	if i := strings.LastIndex(cut, "-"); i > 0 {
+		cut = cut[:i]
+	}
+	return strings.Trim(cut, "-")
+}
+
+// FolderName names the output folder "<company>-<role>-<date>". Company and role
+// are shortened separately so that a long, chatty value from the model can never
+// push the date out of the name.
+func FolderName(company, role string, t time.Time) string {
+	var parts []string
+	for _, p := range []string{shortSlug(company, 24), shortSlug(role, 32), t.Format("2006-01-02")} {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, "-")
 }

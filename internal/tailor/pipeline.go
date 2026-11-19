@@ -93,12 +93,14 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	}
 
 	res := &Result{Analysis: analysis, Lang: lang}
+	var verifierCoverage []Coverage
 	for round := 0; ; round++ {
 		opt.logf("verifying every claim against the profile (round %d)", round+1)
-		issues, err := check(ctx, p, g, profile, offer, docs)
+		issues, coverage, err := check(ctx, p, g, profile, offer, analysis, docs)
 		if err != nil {
 			return nil, err
 		}
+		verifierCoverage = coverage
 		// A course named under two degrees is not a false claim, so it is
 		// repaired (or, as a last resort, deduplicated) rather than dropped.
 		dups := duplicateCourseIssues(docs, catalog)
@@ -121,6 +123,15 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 
 	res.Warnings = append(res.Warnings, groundIdentity(g, docs)...)
 	res.Warnings = append(res.Warnings, groundRankings(g, docs)...)
+	res.Warnings = append(res.Warnings, groundProjectLinks(g, docs)...)
+	cleanEducationTitles(docs)
+	cleanRecipient(docs, analysis)
+	res.Warnings = append(res.Warnings, fillSkillsLanguages(profile, docs)...)
+	// The fact-checker's assessment of the requirements is preferred: it has no
+	// stake in the candidate looking good, and some writers skip it entirely.
+	if len(verifierCoverage) > 0 {
+		docs.Coverage = verifierCoverage
+	}
 	groundCoverage(g, docs)
 	res.Docs = *docs
 	return res, nil
@@ -164,7 +175,7 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 
 // check returns id -> reason for every claim that is not fully supported. It
 // combines mechanical quote checks with an independent model review.
-func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer string, docs *Documents) (map[string]string, error) {
+func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer string, analysis JobAnalysis, docs *Documents) (map[string]string, []Coverage, error) {
 	claims := docs.claims()
 	issues := map[string]string{}
 
@@ -179,6 +190,8 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 		}
 		if isEducationDetail(c.ID) && refersToOtherEntry(c.Text) {
 			issues[c.ID] = "refers to another entry or to the other degree; every degree entry must stand on its own, so state the fact fully inside this entry or delete the line"
+		} else if isEducationDetail(c.ID) && courseworkLeadHasRemark(c.Text) {
+			issues[c.ID] = "the coursework line must hold only the list of courses; move the remark in parentheses (for example the language of instruction) to its own line"
 		}
 	}
 
@@ -188,15 +201,15 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 	}
 	raw, err := p.GenerateJSON(ctx, llm.Request{
 		System: verifyPrompt,
-		User:   tag("profile", profile) + tag("job_offer", offer) + tag("claims", list.String()),
+		User:   tag("profile", profile) + tag("job_offer", offer) + requirementsTag(analysis) + tag("claims", list.String()),
 		Schema: llm.SchemaFor[VerificationReport](),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("verifying documents: %w", err)
+		return nil, nil, fmt.Errorf("verifying documents: %w", err)
 	}
 	report, err := decode[VerificationReport](raw, "verification report")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	seen := map[string]bool{}
@@ -217,7 +230,22 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 			}
 		}
 	}
-	return issues, nil
+	return issues, report.Coverage, nil
+}
+
+// requirementsTag lists the offer's requirements for the fact-checker to assess.
+func requirementsTag(a JobAnalysis) string {
+	var b strings.Builder
+	for _, r := range a.MustHave {
+		fmt.Fprintf(&b, "must have: %s\n", r)
+	}
+	for _, r := range a.NiceToHave {
+		fmt.Fprintf(&b, "nice to have: %s\n", r)
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return tag("requirements", b.String())
 }
 
 func problemList(docs *Documents, issues map[string]string) string {
@@ -313,3 +341,53 @@ func mergeIssues(a, b map[string]string) map[string]string {
 	}
 	return out
 }
+
+var (
+	trailingParen = regexp.MustCompile(`\s*\(([^)]*)\)\s*$`)
+	yearRange     = regexp.MustCompile(`^\d{4}\s*[-–—]\s*(\d{4}|[A-Za-z]+)$`)
+)
+
+// cleanEducationTitles removes what weaker models paste into the degree name
+// from the profile heading: the dates ("(2020 - 2025)") and the institution
+// (", Oxford"), which the entry already shows in their own places.
+func cleanEducationTitles(docs *Documents) {
+	for i := range docs.CV.Education {
+		e := &docs.CV.Education[i]
+		d := strings.TrimSpace(e.Degree)
+		if m := trailingParen.FindStringSubmatch(d); m != nil {
+			inner := strings.TrimSpace(m[1])
+			if yearRange.MatchString(inner) || (e.Period != "" && normalize(inner) == normalize(e.Period)) {
+				d = strings.TrimSpace(trailingParen.ReplaceAllString(d, ""))
+			}
+		}
+		if k := strings.LastIndex(d, ", "); k > 0 {
+			tail := strings.TrimSpace(d[k+2:])
+			inst := " " + normalize(e.Institution) + " "
+			if t := normalize(tail); t != "" && len(strings.Fields(t)) <= 6 && strings.Contains(inst, " "+t+" ") {
+				d = strings.TrimSpace(d[:k])
+			}
+		}
+		if d != "" {
+			e.Degree = d
+		}
+	}
+}
+
+var identifierLike = regexp.MustCompile(`^[A-Za-z0-9]+(_[A-Za-z0-9]+)+$`)
+
+// cleanRecipient replaces an addressee that is a placeholder identifier
+// ("hiring_team") with the company name, or with nothing when the company is
+// unknown. The model returns such values when it treats the field as a label.
+func cleanRecipient(docs *Documents, a JobAnalysis) {
+	r := strings.TrimSpace(docs.Letter.Recipient)
+	if identifierLike.MatchString(r) || strings.Contains(r, "_") {
+		docs.Letter.Recipient = strings.TrimSpace(a.Company)
+	}
+}
+
+var courseworkRemark = regexp.MustCompile(`(?i)^\s*[^:()]*\b(coursework|courses)\s*\([^)]*\)\s*:`)
+
+// courseworkLeadHasRemark reports whether a coursework line carries a remark in
+// parentheses before its colon, as in "Relevant coursework (degree studied
+// entirely in English): ...".
+func courseworkLeadHasRemark(text string) bool { return courseworkRemark.MatchString(text) }

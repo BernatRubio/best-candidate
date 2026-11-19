@@ -111,7 +111,7 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 			}
 
 			now := time.Now()
-			dir := filepath.Join(outDir, render.Slug(res.Analysis.Company, res.Analysis.Role, now.Format("2006-01-02")))
+			dir := filepath.Join(outDir, render.FolderName(res.Analysis.Company, res.Analysis.Role, now))
 			if err := render.Write(dir, res, now); err != nil {
 				return err
 			}

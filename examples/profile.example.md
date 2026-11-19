@@ -49,8 +49,23 @@ What the company does, in one line. Your team and your role.
 
 ### Degree, Institution (2014 - 2018)
 
+- Top 10%
 - Thesis: title and one line about it.
-- Anything else worth mentioning (grade, exchange year, relevant courses).
+- Programming: Algorithms, Operating Systems, Databases, Compilers
+- Mathematics: Linear Algebra, Probability, Statistics
+- Highest grades (9.0 or above): Databases 9.4, Statistics 9.1
+
+<!--
+How the tool reads an Education entry
+- Class ranking: write it on its own line, as above ("Top 10%"). It is always shown next to the degree.
+- Courses: list them under the degree they belong to as "Area: course, course, course" lines (at
+  least three courses per line). The tool picks the most relevant courses for each job.
+- A course is named under only one degree. If two degrees list the same course (shared or recognised
+  credits), the tool shows it under the degree that fits the job best, never under both. Spell the
+  course exactly the same way in both lists so the repeat can be detected.
+- Grades: a "Highest grades" line is optional. Items written with a grade ("Databases 9.4") are not
+  treated as course names.
+-->
 
 ## Skills
 
@@ -64,7 +79,7 @@ Be specific about level where it matters.
 
 - English: fluent (C1)
 - Spanish: native
-- Catalan: native
+- French: B2
 
 ## Projects
 

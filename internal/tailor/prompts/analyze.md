@@ -8,5 +8,5 @@ Fill every field of the schema using only what the offer says. Do not guess or a
 - `nice_to_have`: items marked as preferred, a plus, or bonus.
 - `keywords`: the technologies, methods and domain terms the offer itself uses, in the offer's wording.
 - `language`: the language the offer is written in, as an ISO 639-1 code.
-- `company` and `role`: exactly as the offer names them; empty string if absent.
+- `company` and `role`: only the company name and only the job title, each short and plain, with no parentheses, remarks or extra clauses (for example company "Acme" and role "Software Engineer Intern"); empty string if absent.
 - `tone`: a few words on the register (formal, startup-casual, technical, ...).

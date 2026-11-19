@@ -32,6 +32,12 @@ exactly how much you did ("led", "helped", "contributed to"), because the tool w
 Anything missing from the file can never appear in an output. HTML comments (`<!-- ... -->`) are
 ignored, so use them for notes to yourself.
 
+If you list courses, put them under the degree they belong to as `- Area: course, course, course`
+lines, and write a class ranking such as `Top 10%` on its own line. The tool picks the most relevant
+courses for each job and never names the same course under two degrees: a course shared by two
+degrees (for example recognised credits) appears under the one that fits the job best. Spell a
+shared course identically in both lists so the repeat can be detected. The template shows the format.
+
 Then generate documents for each offer, given as a file, a URL or stdin:
 
 ```sh

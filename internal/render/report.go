@@ -27,6 +27,9 @@ func Report(res *tailor.Result) string {
 		}
 	}
 
+	if len(res.Docs.Coverage) == 0 {
+		b.WriteString("## Requirements\n\nThe model did not assess the offer's requirements, so nothing can be said about what your profile covers. Compare the offer with your profile yourself.\n\n")
+	}
 	b.WriteString("## Requirements the profile covers\n\n")
 	if len(matched) == 0 {
 		b.WriteString("None.\n")
