@@ -321,3 +321,22 @@ func TestIsTransientGemini(t *testing.T) {
 		t.Error("non-API errors are not transient")
 	}
 }
+
+func TestAPIMessageShowsUpstreamDetail(t *testing.T) {
+	body := `{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"model is temporarily rate-limited upstream","provider_name":"SomeHost"}}}`
+	got := apiMessage([]byte(body))
+	for _, want := range []string{"Provider returned error", "SomeHost", "rate-limited upstream"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if got := apiMessage([]byte(`{"error":{"message":"plain"}}`)); got != "plain" {
+		t.Errorf("plain error changed: %q", got)
+	}
+	if got := apiMessage([]byte(`{"error":{"message":"m","metadata":{"raw":{"x":1}}}}`)); !strings.Contains(got, `{"x":1}`) {
+		t.Errorf("object raw not shown: %q", got)
+	}
+	if got := apiMessage([]byte("<html>bad gateway</html>")); !strings.Contains(got, "bad gateway") {
+		t.Errorf("non-JSON body lost: %q", got)
+	}
+}

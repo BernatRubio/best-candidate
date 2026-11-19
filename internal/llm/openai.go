@@ -56,13 +56,15 @@ func NewOpenAICompat(cfg OpenAICompatConfig) (*OpenAICompat, error) {
 	return &OpenAICompat{
 		cfg:     cfg,
 		http:    &http.Client{Timeout: 10 * time.Minute},
-		backoff: time.Second,
+		backoff: 2 * time.Second,
 	}, nil
 }
 
 func (o *OpenAICompat) Name() string { return o.cfg.Name + "/" + o.cfg.Model }
 
-const maxAttempts = 3
+// maxAttempts bounds retries of rate limits and overload: with a 2s base the
+// waits are 2s, 4s, 8s and 16s (or the server's Retry-After, up to 30s).
+const maxAttempts = 5
 
 type chatResponse struct {
 	Choices []struct {
@@ -108,12 +110,14 @@ func (o *OpenAICompat) GenerateJSON(ctx context.Context, req Request) (json.RawM
 	}
 
 	var lastErr error
+	notify := stderrNotify(o.cfg.Name, maxAttempts)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			wait := o.backoff << (attempt - 1)
 			if ra, ok := lastErr.(*retryableError); ok && ra.after > 0 {
 				wait = ra.after
 			}
+			notify(lastErr, wait)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -204,15 +208,42 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 }
 
 // apiMessage extracts the error text from an API error body, falling back to
-// the (truncated) raw body.
+// the (truncated) raw body. Gateways such as OpenRouter wrap the real reason in
+// error.metadata ("Provider returned error" plus the upstream provider's own
+// message), so that detail is appended when present.
 func apiMessage(data []byte) string {
 	var e struct {
 		Error struct {
-			Message string `json:"message"`
+			Message  string `json:"message"`
+			Metadata struct {
+				Raw          json.RawMessage `json:"raw"`
+				ProviderName string          `json:"provider_name"`
+			} `json:"metadata"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(data, &e) == nil && e.Error.Message != "" {
-		return e.Error.Message
+		msg := e.Error.Message
+		var detail string
+		if raw := e.Error.Metadata.Raw; len(raw) > 0 {
+			var str string
+			if json.Unmarshal(raw, &str) == nil {
+				detail = str
+			} else {
+				detail = string(raw)
+			}
+		}
+		if detail = strings.TrimSpace(detail); len(detail) > 300 {
+			detail = detail[:300] + "..."
+		}
+		switch provider := e.Error.Metadata.ProviderName; {
+		case provider != "" && detail != "":
+			msg += " (" + provider + ": " + detail + ")"
+		case provider != "":
+			msg += " (" + provider + ")"
+		case detail != "":
+			msg += " (" + detail + ")"
+		}
+		return msg
 	}
 	s := strings.TrimSpace(string(data))
 	if len(s) > 300 {
