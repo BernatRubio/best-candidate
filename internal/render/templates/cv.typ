@@ -170,4 +170,4 @@
   ]
 }
 
-#fit-page(build, sizes, gaps, margin)
+#fit-page(build, sizes, gaps, margin, tight: (0.9, 0.8))

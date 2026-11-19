@@ -71,6 +71,10 @@ Each run writes `out/<company>-<role>-<date>/`:
 | `cv.json`, `letter.json` | the content, editable |
 | `cv.typ`, `letter.typ`, `common.typ` | the Typst templates, editable |
 
+The CV is always kept to one page: the font size and spacing adapt to the content, and if that is not
+enough the least relevant content is removed from the end of each list (every cut is listed in
+`report.md`). A cover letter longer than one page is reported but not cut.
+
 After editing the JSON or the templates, rebuild the PDFs with `./best-candidate render out/<folder>`.
 The command exits with status 2 if it had to remove statements it could not verify.
 

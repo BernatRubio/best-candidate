@@ -39,7 +39,7 @@ A CV that just reproduces the profile has failed. A reader should see within sec
 - **Languages.** Fill `languages` whenever the profile lists spoken languages; never leave it empty then. One short item per language, written "Name (level)", for example "Spanish (native)". Nothing else belongs in it: no sentences and no remarks about where something was studied (put that in Education if it matters).
 - **Other sections.** `sections` is only for extra blocks such as certifications (`layout` "bullets", `placement` "after_education"), and only if relevant to the job. Never put projects, skills or languages there.
 - **Summary.** At most three sentences and about 50 words, written without first-person pronouns ("Computer Science graduate with ...", not "I built ..."), positioning the candidate for this role with supported facts and the offer's terms. Do not repeat details that the sections below state in full (such as dates, the city or every skill), do not say the candidate already holds the offered title, and use no adjectives the profile does not support ("passionate", "highly skilled", "results-driven"). If the profile cannot support a summary, leave `text` empty.
-- **Length.** Aim for one page, two at most. A focused CV beats a complete one.
+- **Length.** The CV must fit on ONE A4 page. Budget about 12 bullets in total across projects, experience and education, each bullet under about 30 words, and at most 4 skills lines. Put the most relevant item first in every list, because anything over the page is cut from the end.
 - Start bullets with a verb. Write all text in the language given in <language>.
 
 # Letter

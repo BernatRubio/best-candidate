@@ -1,9 +1,6 @@
 package render
 
 import (
-	"bytes"
-	"compress/zlib"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -138,17 +135,9 @@ func pdfURIs(t *testing.T, path string) map[string]bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chunks := [][]byte{data}
-	for _, m := range regexp.MustCompile(`(?s)stream\r?\n(.*?)\r?\nendstream`).FindAllSubmatch(data, -1) {
-		if r, err := zlib.NewReader(bytes.NewReader(m[1])); err == nil {
-			if plain, err := io.ReadAll(r); err == nil {
-				chunks = append(chunks, plain)
-			}
-		}
-	}
 	uris := map[string]bool{}
 	re := regexp.MustCompile(`/URI\s*\(([^)]*)\)`)
-	for _, c := range chunks {
+	for _, c := range pdfChunks(data) {
 		for _, m := range re.FindAllSubmatch(c, -1) {
 			uris[string(m[1])] = true
 		}
@@ -233,22 +222,9 @@ func TestOldCVJSONStillRenders(t *testing.T) {
 // pdfPages counts the pages of a PDF.
 func pdfPages(t *testing.T, path string) int {
 	t.Helper()
-	data, err := os.ReadFile(path)
+	n, err := PDFPages(path)
 	if err != nil {
 		t.Fatal(err)
-	}
-	chunks := [][]byte{data}
-	for _, m := range regexp.MustCompile(`(?s)stream\r?\n(.*?)\r?\nendstream`).FindAllSubmatch(data, -1) {
-		if r, err := zlib.NewReader(bytes.NewReader(m[1])); err == nil {
-			if plain, err := io.ReadAll(r); err == nil {
-				chunks = append(chunks, plain)
-			}
-		}
-	}
-	n := 0
-	re := regexp.MustCompile(`/Type\s*/Page[^s]`)
-	for _, c := range chunks {
-		n += len(re.FindAll(c, -1))
 	}
 	return n
 }

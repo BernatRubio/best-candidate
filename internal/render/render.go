@@ -99,18 +99,26 @@ func Compile(dir string) error {
 			return err
 		}
 	}
+	for _, job := range [][2]string{{"cv.typ", "cv.pdf"}, {"letter.typ", "cover-letter.pdf"}} {
+		if err := compileOne(dir, job[0], job[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// compileOne builds one PDF from a template in dir.
+func compileOne(dir, typFile, pdfFile string) error {
 	typst, err := findTypst()
 	if err != nil {
 		return err
 	}
-	for _, job := range [][2]string{{"cv.typ", "cv.pdf"}, {"letter.typ", "cover-letter.pdf"}} {
-		cmd := exec.Command(typst, "compile", job[0], job[1])
-		cmd.Dir = dir
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("typst compile %s: %w\n%s", job[0], err, strings.TrimSpace(stderr.String()))
-		}
+	cmd := exec.Command(typst, "compile", typFile, pdfFile)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("typst compile %s: %w\n%s", typFile, err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }

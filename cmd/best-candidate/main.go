@@ -119,10 +119,8 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 
 			now := time.Now()
 			dir := filepath.Join(outDir, render.FolderName(res.Analysis.Company, res.Analysis.Role, now))
-			if err := render.Write(dir, res, now); err != nil {
-				return err
-			}
-			if err := render.Compile(dir); err != nil {
+			info, err := render.Build(dir, res, now)
+			if err != nil {
 				return fmt.Errorf("documents written to %s but PDF build failed: %w", dir, err)
 			}
 
@@ -134,6 +132,7 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 			}
 			fmt.Printf("\nDone: %s\n", dir)
 			fmt.Printf("  cv.pdf, cover-letter.pdf, report.md (plus editable cv.json, letter.json, *.typ)\n")
+			fmt.Printf("  cv.pdf: %d page(s), cover-letter.pdf: %d page(s)\n", info.CVPages, info.LetterPages)
 			fmt.Printf("  requirements covered by your profile: %d of %d\n", covered, len(res.Docs.Coverage))
 			for _, w := range res.Warnings {
 				fmt.Printf("  warning: %s\n", w)

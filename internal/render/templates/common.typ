@@ -57,15 +57,17 @@
 // Lay out `build(size, gap)` so that it fills the page without overflowing:
 // the largest font size from `sizes` (in descending order) that fits on one
 // page, then the roomiest spacing factor from `gaps` (descending, last = 1.0)
-// that still fits at that size. If even the smallest size overflows, the
-// content flows onto a second page at the smallest size.
-#let fit-page(build, sizes, gaps, margin) = context {
+// that still fits at that size. If even the smallest size overflows, tighter
+// spacing factors from `tight` are tried at that size, and only then does the
+// content flow onto a second page (best-candidate then trims it, see Build).
+#let fit-page(build, sizes, gaps, margin, tight: ()) = context {
   let w = page.width - 2 * margin.x
   let h = page.height - 2 * margin.y
   let fits(sz, gap) = measure(width: w, build(sz, gap)).height <= h
   let size = sizes.find(sz => fits(sz, gaps.last()))
   if size == none {
-    build(sizes.last(), gaps.last())
+    let g = tight.find(g => fits(sizes.last(), g))
+    build(sizes.last(), if g == none { gaps.last() } else { g })
   } else {
     build(size, gaps.find(g => fits(size, g)))
   }
