@@ -300,3 +300,14 @@ func TestFolderName(t *testing.T) {
 		}
 	}
 }
+
+func TestReportHasATSSection(t *testing.T) {
+	res := sample()
+	res.ATS = tailor.ATS{Present: []string{"Go"}, Missing: []string{"PostgreSQL"}, NotInProfile: []string{"Kafka"}, NotInBullets: []string{"Docker"}, Bullets: 4, Unchanged: 3}
+	r := Report(res)
+	for _, want := range []string{"## ATS keyword match", "1 of 2 offer keywords", "- PostgreSQL", "- Kafka", "- Docker", "3 of 4 experience and project bullets"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("report lacks %q:\n%s", want, r)
+		}
+	}
+}

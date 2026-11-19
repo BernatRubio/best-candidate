@@ -47,6 +47,37 @@ func Report(res *tailor.Result) string {
 		fmt.Fprintf(&b, "- %s\n", c.Requirement)
 	}
 
+	b.WriteString("\n## ATS keyword match\n\n")
+	if total := len(res.ATS.Present) + len(res.ATS.Missing); total+len(res.ATS.NotInProfile) == 0 {
+		b.WriteString("No keyword assessment is available.\n")
+	} else {
+		fmt.Fprintf(&b, "%d of %d offer keywords your profile supports appear in the CV.\n\n", len(res.ATS.Present), total)
+		if len(res.ATS.Missing) > 0 {
+			b.WriteString("Supported by your profile but not in the CV (they did not fit truthfully or were cut for space):\n\n")
+			for _, k := range res.ATS.Missing {
+				fmt.Fprintf(&b, "- %s\n", k)
+			}
+			b.WriteString("\n")
+		}
+		if len(res.ATS.NotInBullets) > 0 {
+			b.WriteString("In the CV only as a skill, although your profile shows them used in your work:\n\n")
+			for _, k := range res.ATS.NotInBullets {
+				fmt.Fprintf(&b, "- %s\n", k)
+			}
+			b.WriteString("\n")
+		}
+		if len(res.ATS.NotInProfile) > 0 {
+			b.WriteString("In the offer but not shown by your profile. If you do have this experience, add it to your profile and run again:\n\n")
+			for _, k := range res.ATS.NotInProfile {
+				fmt.Fprintf(&b, "- %s\n", k)
+			}
+		}
+	}
+
+	if res.ATS.Bullets > 0 {
+		fmt.Fprintf(&b, "\n%d of %d experience and project bullets are word for word as in your profile (not tailored).\n", res.ATS.Unchanged, res.ATS.Bullets)
+	}
+
 	b.WriteString("\n## Removed because it could not be verified\n\n")
 	if len(res.Dropped) == 0 {
 		b.WriteString("Nothing was removed: every statement was backed by the profile.\n")

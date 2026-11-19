@@ -25,7 +25,7 @@ const testOffer = "Acme is hiring a Go developer. Requirements: Go, Kubernetes."
 
 var analysis = JobAnalysis{
 	Company: "Acme", Role: "Go developer", Language: "en",
-	MustHave: []string{"Go", "Kubernetes"}, Keywords: []string{"Go"}, Tone: "technical",
+	MustHave: []string{"Go", "Kubernetes"}, Keywords: []KeyTerm{{Term: "Go", Importance: ImportanceRequired}}, Tone: "technical",
 }
 
 func baseDocs() Documents {
@@ -595,13 +595,13 @@ func TestSortEducationTiesUseOfferKeywords(t *testing.T) {
 		eduEntry("Media", 5, "Relevant coursework: Video Processing"),
 		eduEntry("Computing", 5, "Relevant coursework: Python, Databases, Algorithms"),
 	}
-	sortEducation(&docs, JobAnalysis{Keywords: []string{"Python", "Databases"}, MustHave: []string{"Python"}})
+	sortEducation(&docs, JobAnalysis{Keywords: []KeyTerm{{Term: "Python"}, {Term: "Databases"}}, MustHave: []string{"Python"}})
 	if got := degrees(&docs); got != "Computing,Media" {
 		t.Fatalf("order = %s", got)
 	}
 	// With no keyword signal either, the model's order is kept.
 	docs.CV.Education = []Education{eduEntry("A", 5), eduEntry("B", 5)}
-	sortEducation(&docs, JobAnalysis{Keywords: []string{"Python"}})
+	sortEducation(&docs, JobAnalysis{Keywords: []KeyTerm{{Term: "Python"}}})
 	if got := degrees(&docs); got != "A,B" {
 		t.Fatalf("order = %s", got)
 	}

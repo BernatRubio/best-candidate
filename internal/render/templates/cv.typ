@@ -7,7 +7,7 @@
 #let cv = data.cv
 
 #let labels = (
-  en: (summary: "Profile", experience: "Experience", education: "Education", projects: "Projects", skills: "Skills", languages: "Languages"),
+  en: (summary: "Summary", experience: "Experience", education: "Education", projects: "Projects", skills: "Skills", languages: "Languages"),
   es: (summary: "Perfil", experience: "Experiencia", education: "Formación", projects: "Proyectos", skills: "Habilidades", languages: "Idiomas"),
   ca: (summary: "Perfil", experience: "Experiència", education: "Formació", projects: "Projectes", skills: "Habilitats", languages: "Idiomes"),
 )
@@ -25,9 +25,10 @@
 #let sizes = (11pt, 10.5pt, 10pt, 9.5pt)
 #let gaps = (1.8, 1.65, 1.5, 1.4, 1.3, 1.2, 1.1, 1.0)
 
-#set document(title: cv.name)
+#set document(title: cv.name + " CV", author: cv.name)
 #set page(paper: "a4", margin: margin)
-#set text(font: "Libertinus Serif", lang: lang)
+// Ligatures off: "fi" and "fl" glyphs extract badly in applicant tracking systems.
+#set text(font: "Libertinus Serif", lang: lang, ligatures: false)
 #show: setup-links
 
 #let heading-line(title, gap) = {

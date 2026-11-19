@@ -45,6 +45,7 @@ type Result struct {
 	Docs     Documents
 	Dropped  []Dropped
 	Warnings []string
+	ATS      ATS
 }
 
 func (o Options) logf(format string, args ...any) {
@@ -85,9 +86,10 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	opt.logf("offer: %s at %s (writing in %q)", analysis.Role, analysis.Company, lang)
 
 	g := newGrounder(profile)
+	profileSkills := " " + normalize(strings.Join(profileSection(profile, "skills"), "\n")) + " "
 	catalog := courseCatalog(profile)
 	opt.logf("tailoring the documents")
-	docs, err := tailorDocs(ctx, p, profile, offer, analysis, lang, nil, "")
+	docs, err := tailorDocs(ctx, p, profile, offer, analysis, lang, nil, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -95,20 +97,24 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 
 	res := &Result{Analysis: analysis, Lang: lang}
 	var verifierCoverage []Coverage
+	var support []KeywordSupport
 	for round := 0; ; round++ {
 		opt.logf("verifying every claim against the profile (round %d)", round+1)
-		issues, coverage, err := check(ctx, p, g, profile, offer, analysis, docs)
+		issues, coverage, kw, err := check(ctx, p, g, profile, offer, analysis, docs)
 		if err != nil {
 			return nil, err
 		}
-		verifierCoverage = coverage
+		verifierCoverage, support = coverage, kw
+		// Keywords the profile supports but the CV leaves out are not false
+		// claims, so they never cause a drop; they only trigger a repair round.
+		_, gaps := keywordStatus(g, docs, analysis, support, profileSkills)
 		// A course named under two degrees is not a false claim, so it is
 		// repaired (or, as a last resort, deduplicated) rather than dropped.
 		dups := duplicateCourseIssues(docs, catalog)
-		if len(issues) == 0 && len(dups) == 0 {
+		if len(issues) == 0 && len(dups) == 0 && len(gaps) == 0 {
 			break
 		}
-		opt.logf("%d claim(s) flagged", len(issues)+len(dups))
+		opt.logf("%d claim(s) flagged, %d keyword(s) missing", len(issues)+len(dups), len(gaps))
 		if round >= opt.MaxRepairs {
 			res.Dropped = drop(docs, issues)
 			res.Warnings = append(res.Warnings, dedupeCoursework(docs, catalog)...)
@@ -116,13 +122,14 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 		}
 		opt.logf("sending the flagged claims back for correction")
 		prev, _ := json.MarshalIndent(docs, "", "  ")
-		docs, err = tailorDocs(ctx, p, profile, offer, analysis, lang, prev, problemList(docs, mergeIssues(issues, dups)))
+		docs, err = tailorDocs(ctx, p, profile, offer, analysis, lang, prev, problemList(docs, mergeIssues(issues, dups)), missingKeywordsList(analysis, gaps))
 		if err != nil {
 			return nil, err
 		}
 		sortEducation(docs, analysis)
 	}
 
+	res.ATS, _ = keywordStatus(g, docs, analysis, support, profileSkills)
 	res.Warnings = append(res.Warnings, groundIdentity(g, docs)...)
 	res.Warnings = append(res.Warnings, groundRankings(g, docs)...)
 	res.Warnings = append(res.Warnings, groundProjectLinks(g, docs)...)
@@ -151,7 +158,7 @@ func analyze(ctx context.Context, p llm.Provider, offer string) (JobAnalysis, er
 	return decode[JobAnalysis](raw, "job analysis")
 }
 
-func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a JobAnalysis, lang string, prev []byte, problems string) (*Documents, error) {
+func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a JobAnalysis, lang string, prev []byte, problems, missing string) (*Documents, error) {
 	analysisJSON, _ := json.MarshalIndent(a, "", "  ")
 	user := tag("profile", profile) +
 		tag("job_offer", offer) +
@@ -159,6 +166,9 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 		tag("language", lang)
 	if prev != nil {
 		user += tag("previous_output", string(prev)) + tag("problems", problems)
+		if missing != "" {
+			user += tag("missing_keywords", missing)
+		}
 	}
 	raw, err := p.GenerateJSON(ctx, llm.Request{
 		System: tailorPrompt,
@@ -177,7 +187,7 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 
 // check returns id -> reason for every claim that is not fully supported. It
 // combines mechanical quote checks with an independent model review.
-func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer string, analysis JobAnalysis, docs *Documents) (map[string]string, []Coverage, error) {
+func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer string, analysis JobAnalysis, docs *Documents) (map[string]string, []Coverage, []KeywordSupport, error) {
 	claims := docs.claims()
 	issues := map[string]string{}
 
@@ -203,15 +213,15 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 	}
 	raw, err := p.GenerateJSON(ctx, llm.Request{
 		System: verifyPrompt,
-		User:   tag("profile", profile) + tag("job_offer", offer) + requirementsTag(analysis) + tag("claims", list.String()),
+		User:   tag("profile", profile) + tag("job_offer", offer) + requirementsTag(analysis) + keywordsTag(analysis) + tag("claims", list.String()),
 		Schema: llm.SchemaFor[VerificationReport](),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("verifying documents: %w", err)
+		return nil, nil, nil, fmt.Errorf("verifying documents: %w", err)
 	}
 	report, err := decode[VerificationReport](raw, "verification report")
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	seen := map[string]bool{}
@@ -232,7 +242,7 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 			}
 		}
 	}
-	return issues, report.Coverage, nil
+	return issues, report.Coverage, report.Keywords, nil
 }
 
 // requirementsTag lists the offer's requirements for the fact-checker to assess.

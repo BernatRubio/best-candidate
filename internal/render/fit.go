@@ -104,12 +104,7 @@ func trimCV(cv *tailor.CV) (string, bool) {
 		e.Bullets = e.Bullets[:len(e.Bullets)-1]
 		return fmt.Sprintf("removed a bullet from %q at %q", e.Title, e.Company), true
 	}
-	// 5. skills beyond two lines
-	if len(cv.Skills) > 2 {
-		cv.Skills = cv.Skills[:len(cv.Skills)-1]
-		return "removed the last skills line", true
-	}
-	// 6. down to one bullet per project and per job
+	// 5. down to one bullet per project and per job
 	counts = make([]int, len(cv.Projects))
 	for i, p := range cv.Projects {
 		counts[i] = len(p.Details)
@@ -127,6 +122,11 @@ func trimCV(cv *tailor.CV) (string, bool) {
 		e := &cv.Experience[i]
 		e.Bullets = e.Bullets[:len(e.Bullets)-1]
 		return fmt.Sprintf("removed a bullet from %q at %q", e.Title, e.Company), true
+	}
+	// 6. skills beyond two lines (they carry the most keywords per line, so they go late)
+	if len(cv.Skills) > 2 {
+		cv.Skills = cv.Skills[:len(cv.Skills)-1]
+		return "removed the last skills line", true
 	}
 	// 7. last resort: the summary
 	if strings.TrimSpace(cv.Summary.Text) != "" {

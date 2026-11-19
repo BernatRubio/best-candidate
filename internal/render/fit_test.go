@@ -183,3 +183,21 @@ func TestBuildReportsALongLetter(t *testing.T) {
 		t.Fatalf("the CV must be unaffected: %d pages", info.CVPages)
 	}
 }
+
+// Skills carry the most keywords per line, so they are cut only after every job
+// and project is down to one bullet.
+func TestTrimCVKeepsSkillsUntilBulletsAreMinimal(t *testing.T) {
+	cv := &tailor.CV{
+		Skills:     bullets("skill", 4),
+		Experience: []tailor.Experience{{Title: "Role", Company: "A", Bullets: bullets("job", 3)}},
+	}
+	for {
+		_, ok := trimCV(cv)
+		if !ok {
+			break
+		}
+		if len(cv.Skills) < 4 && len(cv.Experience[0].Bullets) > 1 {
+			t.Fatalf("skills cut while the job still has %d bullets", len(cv.Experience[0].Bullets))
+		}
+	}
+}

@@ -12,7 +12,7 @@
 
 #set document(title: data.name)
 #set page(paper: "a4", margin: margin)
-#set text(font: "Libertinus Serif", hyphenate: false, lang: if data.lang in ("en", "es", "ca") { data.lang } else { "en" })
+#set text(font: "Libertinus Serif", hyphenate: false, ligatures: false, lang: if data.lang in ("en", "es", "ca") { data.lang } else { "en" })
 #show: setup-links
 
 #let build(size, gap) = {

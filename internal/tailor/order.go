@@ -20,11 +20,13 @@ func sortEducation(docs *Documents, a JobAnalysis) {
 		return
 	}
 	var keywords []string
-	for _, group := range [][]string{a.Keywords, a.MustHave} {
-		for _, k := range group {
-			if n := normalize(k); n != "" {
-				keywords = append(keywords, n)
-			}
+	terms := append([]string{}, a.MustHave...)
+	for _, k := range a.Keywords {
+		terms = append(terms, k.forms()...)
+	}
+	for _, k := range terms {
+		if n := normalize(k); n != "" {
+			keywords = append(keywords, n)
 		}
 	}
 	score := make([]int, len(edu))
