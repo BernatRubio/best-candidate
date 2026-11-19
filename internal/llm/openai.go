@@ -180,6 +180,11 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 			return nil, re
 		case http.StatusBadRequest:
 			return nil, fmt.Errorf("%w (if the server does not support json_schema output, set BC_JSON_MODE=object)", apiErr)
+		case http.StatusUnauthorized, http.StatusForbidden:
+			if o.cfg.APIKey == "" {
+				return nil, fmt.Errorf("%w (no API key was sent: export BC_API_KEY, or OPENAI_API_KEY, in this shell)", apiErr)
+			}
+			return nil, fmt.Errorf("%w (the API key was rejected: check it and that it belongs to this provider)", apiErr)
 		}
 		return nil, apiErr
 	}

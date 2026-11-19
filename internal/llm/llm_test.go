@@ -340,3 +340,19 @@ func TestAPIMessageShowsUpstreamDetail(t *testing.T) {
 		t.Errorf("non-JSON body lost: %q", got)
 	}
 }
+
+func TestAuthErrorsExplainTheKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"No cookie auth credentials found","code":401}}`, http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	noKey, _ := NewOpenAICompat(OpenAICompatConfig{Name: "compat", BaseURL: srv.URL, Model: "m"})
+	if _, err := noKey.GenerateJSON(context.Background(), req); err == nil || !strings.Contains(err.Error(), "BC_API_KEY") {
+		t.Fatalf("missing key must be explained: %v", err)
+	}
+	withKey := newCompat(t, srv.URL, "")
+	if _, err := withKey.GenerateJSON(context.Background(), req); err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("rejected key must be explained: %v", err)
+	}
+}
