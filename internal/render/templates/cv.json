@@ -1,0 +1,61 @@
+{
+  "lang": "en",
+  "cv": {
+    "name": "Your Full Name",
+    "contact": ["City, Country", "you@example.com", "+00 000 000 000", "linkedin.com/in/you", "github.com/you"],
+    "summary": {
+      "text": "Placeholder summary so the editor can preview the template.",
+      "sources": []
+    },
+    "experience": [
+      {
+        "title": "Job title",
+        "company": "Company",
+        "location": "City",
+        "period": "2021-2024",
+        "sources": [],
+        "bullets": [
+          { "text": "Placeholder bullet.", "sources": [] }
+        ]
+      }
+    ],
+    "education": [
+      {
+        "degree": "Degree",
+        "institution": "Institution",
+        "period": "2017-2021",
+        "ranking": "Top 25%",
+        "sources": [],
+        "details": []
+      }
+    ],
+    "sections": [
+      {
+        "title": "Projects",
+        "layout": "bullets",
+        "placement": "before_experience",
+        "items": [
+          { "text": "Project name: one line about it. Code at https://github.com/you/project", "sources": [] }
+        ]
+      },
+      {
+        "title": "Skills",
+        "layout": "lines",
+        "placement": "after_education",
+        "items": [
+          { "text": "Languages: Skill one, Skill two", "sources": [] },
+          { "text": "Tools: Tool one, Tool two", "sources": [] }
+        ]
+      },
+      {
+        "title": "Languages",
+        "layout": "inline",
+        "placement": "after_education",
+        "items": [
+          { "text": "Language one (native)", "sources": [] },
+          { "text": "Language two (B2)", "sources": [] }
+        ]
+      }
+    ]
+  }
+}

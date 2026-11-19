@@ -1,0 +1,296 @@
+package render
+
+import (
+	"bytes"
+	"compress/zlib"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/BernatRubio/best-candidate/internal/tailor"
+)
+
+func sample() *tailor.Result {
+	return &tailor.Result{
+		Lang:     "ca",
+		Analysis: tailor.JobAnalysis{Company: "Acme", Role: "Desenvolupador Go"},
+		Docs: tailor.Documents{
+			CV: tailor.CV{
+				Name:    "Ada Exemple",
+				Contact: []string{"Location: Barcelona", "Email: ada@example.com", "Phone: +34 600 000 000", "Links: www.linkedin.com/in/ada, https://github.com/ada"},
+				Summary: tailor.Claim{Text: "Desenvolupadora backend amb experiència en Go."},
+				Experience: []tailor.Experience{{
+					Title: "Desenvolupadora backend", Company: "Initech", Location: "Barcelona", Period: "2020-2023",
+					Bullets: []tailor.Claim{{Text: "Vaig crear APIs REST en Go per a l'equip de facturació."}},
+				}},
+				Education: []tailor.Education{{Degree: "Enginyeria Informàtica", Institution: "UPC", Period: "2016-2020"}},
+				Sections: []tailor.Section{
+					{Title: "Projectes", Layout: tailor.LayoutBullets, Placement: tailor.PlaceBeforeExperience, Items: []tailor.Claim{
+						{Text: "AquaGuard: algorisme de descompressió. Codi a https://github.com/ada/aquaguard."},
+					}},
+					{Title: "Tecnologies", Layout: tailor.LayoutLines, Placement: tailor.PlaceAfterEducation, Items: []tailor.Claim{
+						{Text: "Llenguatges: Go, Python"}, {Text: "Eines: Git, Docker"},
+					}},
+					{Title: "Idiomes", Layout: tailor.LayoutInline, Placement: tailor.PlaceAfterEducation, Items: []tailor.Claim{
+						{Text: "Català (nadiu)"}, {Text: "Anglès (B2)"},
+					}},
+				},
+			},
+			Letter: tailor.Letter{
+				Recipient: "Acme", Greeting: "Estimat equip,",
+				Paragraphs: []tailor.Claim{{Text: "Us escric per al lloc de desenvolupador Go."}},
+				Closing:    "Cordialment,", Signature: "Ada Exemple",
+			},
+			Coverage: []tailor.Coverage{
+				{Requirement: "Go", Covered: true, Evidence: "APIs REST en Go"},
+				{Requirement: "Kubernetes"},
+			},
+		},
+		Dropped: []tailor.Dropped{{ID: "cv.summary", Text: "x", Reason: "unsupported: y"}},
+	}
+}
+
+func TestWriteAndCompile(t *testing.T) {
+	if _, err := findTypst(); err != nil {
+		t.Skip("typst not installed")
+	}
+	dir := t.TempDir()
+	if err := Write(dir, sample(), time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compile(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"cv.pdf", "cover-letter.pdf"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(string(data), "%PDF") {
+			t.Fatalf("%s is not a PDF", name)
+		}
+	}
+}
+
+func TestCompileKeepsHandEditedTemplate(t *testing.T) {
+	if _, err := findTypst(); err != nil {
+		t.Skip("typst not installed")
+	}
+	dir := t.TempDir()
+	if err := Write(dir, sample(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	custom := "// hand edited\n" + readFile(t, filepath.Join(dir, "cv.typ"))
+	if err := os.WriteFile(filepath.Join(dir, "cv.typ"), []byte(custom), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compile(dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(dir, "cv.typ")); got != custom {
+		t.Fatal("Compile overwrote an edited template")
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestReport(t *testing.T) {
+	r := Report(sample())
+	for _, want := range []string{"Desenvolupador Go at Acme", "**Go**", "- Kubernetes", "`cv.summary`"} {
+		if !strings.Contains(r, want) {
+			t.Errorf("report missing %q:\n%s", want, r)
+		}
+	}
+}
+
+func TestSlugAndDate(t *testing.T) {
+	if got := Slug("Acme S.L.", "Desenvolupador/a Go – Sènior"); got != "acme-s-l-desenvolupador-a-go-senior" {
+		t.Fatalf("slug = %q", got)
+	}
+	d := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	cases := map[string]string{
+		"en": "November 19, 2026",
+		"es": "19 de noviembre de 2026",
+		"ca": "19 de novembre de 2026",
+		"fr": "2026-11-19",
+	}
+	for lang, want := range cases {
+		if got := FormatDate(d, lang); got != want {
+			t.Errorf("%s: %q != %q", lang, got, want)
+		}
+	}
+}
+
+// pdfURIs lists the link targets (/URI annotations) found in a PDF.
+func pdfURIs(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := [][]byte{data}
+	for _, m := range regexp.MustCompile(`(?s)stream\r?\n(.*?)\r?\nendstream`).FindAllSubmatch(data, -1) {
+		if r, err := zlib.NewReader(bytes.NewReader(m[1])); err == nil {
+			if plain, err := io.ReadAll(r); err == nil {
+				chunks = append(chunks, plain)
+			}
+		}
+	}
+	uris := map[string]bool{}
+	re := regexp.MustCompile(`/URI\s*\(([^)]*)\)`)
+	for _, c := range chunks {
+		for _, m := range re.FindAllSubmatch(c, -1) {
+			uris[string(m[1])] = true
+		}
+	}
+	return uris
+}
+
+func TestLinksAreClickable(t *testing.T) {
+	if _, err := findTypst(); err != nil {
+		t.Skip("typst not installed")
+	}
+	dir := t.TempDir()
+	if err := Write(dir, sample(), time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compile(dir); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"mailto:ada@example.com",
+		"https://www.linkedin.com/in/ada",
+		"https://github.com/ada",
+	}
+	for _, pdf := range []string{"cv.pdf", "cover-letter.pdf"} {
+		got := pdfURIs(t, filepath.Join(dir, pdf))
+		for _, w := range want {
+			if !got[w] {
+				t.Errorf("%s: missing link %q (have %v)", pdf, w, got)
+			}
+		}
+		for u := range got {
+			if strings.HasPrefix(u, "tel:") {
+				t.Errorf("%s: phone numbers must stay plain text, found %q", pdf, u)
+			}
+		}
+	}
+	// A URL written inside a bullet is linked too (no trailing full stop).
+	if got := pdfURIs(t, filepath.Join(dir, "cv.pdf")); !got["https://github.com/ada/aquaguard"] {
+		t.Errorf("body URL not linked: %v", got)
+	}
+}
+
+func TestCleanContact(t *testing.T) {
+	in := []string{
+		"Location: Barcelona",
+		"Email: ada@example.com",
+		"Phone: +34 600 000 000",
+		"Links: www.linkedin.com/in/ada, https://github.com/ada",
+		"Barcelona, Spain",
+		"EMAIL: ada@example.com", // duplicate, different case
+		"",
+	}
+	want := []string{"Barcelona", "ada@example.com", "+34 600 000 000", "www.linkedin.com/in/ada", "https://github.com/ada", "Barcelona, Spain"}
+	got := CleanContact(in)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	if got := CleanContact(nil); got == nil || len(got) != 0 {
+		t.Fatalf("nil input must give an empty, non-nil slice: %#v", got)
+	}
+}
+
+func TestOldCVJSONStillRenders(t *testing.T) {
+	if _, err := findTypst(); err != nil {
+		t.Skip("typst not installed")
+	}
+	dir := t.TempDir()
+	if err := Write(dir, sample(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Files written before `layout`/`placement` existed used `inline`.
+	old := `{"lang":"en","cv":{"name":"Ada","contact":["a@b.co"],"summary":{"text":"","sources":[]},` +
+		`"experience":[],"education":[],"sections":[{"title":"Skills","inline":true,"items":[{"text":"Go","sources":[]},{"text":"C","sources":[]}]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "cv.json"), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compile(dir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pdfPages counts the pages of a PDF.
+func pdfPages(t *testing.T, path string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks := [][]byte{data}
+	for _, m := range regexp.MustCompile(`(?s)stream\r?\n(.*?)\r?\nendstream`).FindAllSubmatch(data, -1) {
+		if r, err := zlib.NewReader(bytes.NewReader(m[1])); err == nil {
+			if plain, err := io.ReadAll(r); err == nil {
+				chunks = append(chunks, plain)
+			}
+		}
+	}
+	n := 0
+	re := regexp.MustCompile(`/Type\s*/Page[^s]`)
+	for _, c := range chunks {
+		n += len(re.FindAll(c, -1))
+	}
+	return n
+}
+
+func compileSample(t *testing.T, res *tailor.Result) string {
+	t.Helper()
+	if _, err := findTypst(); err != nil {
+		t.Skip("typst not installed")
+	}
+	dir := t.TempDir()
+	if err := Write(dir, res, time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Compile(dir); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// A normal-sized CV and letter must each fit on one page: the templates shrink
+// the font before they spill over.
+func TestShortDocumentsFitOnePage(t *testing.T) {
+	dir := compileSample(t, sample())
+	for _, pdf := range []string{"cv.pdf", "cover-letter.pdf"} {
+		if n := pdfPages(t, filepath.Join(dir, pdf)); n != 1 {
+			t.Errorf("%s has %d pages, want 1", pdf, n)
+		}
+	}
+}
+
+// A CV that cannot fit one page at the smallest size flows onto a second page
+// instead of being cut off or failing.
+func TestVeryLongCVFlowsToSecondPage(t *testing.T) {
+	res := sample()
+	var bullets []tailor.Claim
+	for i := 0; i < 60; i++ {
+		bullets = append(bullets, tailor.Claim{Text: "A fairly long bullet describing one more thing that was done in this role, in some detail."})
+	}
+	res.Docs.CV.Experience[0].Bullets = bullets
+	dir := compileSample(t, res)
+	if n := pdfPages(t, filepath.Join(dir, "cv.pdf")); n < 2 {
+		t.Errorf("cv.pdf has %d page(s); a 60-bullet CV must continue on a second page", n)
+	}
+}

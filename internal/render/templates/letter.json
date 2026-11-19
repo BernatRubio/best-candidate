@@ -1,0 +1,15 @@
+{
+  "lang": "en",
+  "name": "Your Full Name",
+  "contact": ["you@example.com", "+00 000 000 000", "linkedin.com/in/you"],
+  "date": "January 1, 2026",
+  "letter": {
+    "recipient": "Company",
+    "greeting": "Dear hiring team,",
+    "paragraphs": [
+      { "text": "Placeholder paragraph so the editor can preview the template.", "sources": [] }
+    ],
+    "closing": "Kind regards,",
+    "signature": "Your Full Name"
+  }
+}
