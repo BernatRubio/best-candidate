@@ -81,7 +81,7 @@ func TestProgressReportsSlowCalls(t *testing.T) {
 	defer mu.Unlock()
 	waiting, answered := 0, 0
 	for _, l := range lines {
-		if strings.Contains(l, "still waiting") {
+		if strings.Contains(l, "waiting") {
 			waiting++
 		}
 		if strings.Contains(l, "answered after") {

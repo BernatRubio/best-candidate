@@ -38,7 +38,7 @@ func (p *progress) GenerateJSON(ctx context.Context, req Request) (json.RawMessa
 			case <-done:
 				return
 			case <-t.C:
-				p.logf("  still waiting for %s (%s)...", p.Name(), time.Since(start).Round(time.Second))
+				p.logf("  waiting for %s (%s)...", p.Name(), time.Since(start).Round(time.Second))
 			}
 		}
 	}()
