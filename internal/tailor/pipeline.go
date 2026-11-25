@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/BernatRubio/best-candidate/internal/llm"
@@ -104,61 +103,44 @@ func Run(ctx context.Context, p llm.Provider, prof *profile.Profile, offer strin
 	}
 	opt.logf("offer: %s at %s (writing in %q)", analysis.Role, analysis.Company, lang)
 
-	catalog := prof.Courses()
+	rv := newDraftReview(prof, analysis)
 	opt.logf("tailoring the documents")
 	docs, err := tailorDocs(ctx, p, prof.Text(), offer, analysis, lang, nil, "", "")
 	if err != nil {
 		return nil, err
 	}
-	sortEducation(docs, analysis)
+	rv.Prepare(docs)
 
 	res := &Result{Analysis: analysis, Lang: lang}
-	var verifierCoverage []Coverage
-	var support []KeywordSupport
+	var report VerificationReport
 	for round := 0; ; round++ {
 		opt.logf("verifying every claim against the profile (round %d)", round+1)
-		issues, coverage, kw, err := check(ctx, p, prof, offer, analysis, docs)
-		if err != nil {
+		if report, err = verify(ctx, p, prof.Text(), offer, analysis, docs); err != nil {
 			return nil, err
 		}
-		verifierCoverage, support = coverage, kw
-		// Keywords the profile supports but the CV leaves out are not false
-		// claims, so they never cause a drop; they only trigger a repair round.
-		_, gaps := keywordStatus(prof, docs, analysis, support)
-		// A course named under two degrees is not a false claim, so it is
-		// repaired (or, as a last resort, deduplicated) rather than dropped.
-		dups := duplicateCourseIssues(docs, catalog)
-		if len(issues) == 0 && len(dups) == 0 && len(gaps) == 0 {
+		f := rv.Review(docs, report)
+		if f.clean() {
 			break
 		}
-		opt.logf("%d claim(s) flagged, %d keyword(s) missing", len(issues)+len(dups), len(gaps))
+		opt.logf("%d claim(s) flagged, %d keyword(s) missing", len(f.Issues)+len(f.Courses), len(f.Gaps))
 		if round >= opt.MaxRepairs {
-			res.Dropped = drop(docs, issues)
-			res.Warnings = append(res.Warnings, dedupeCoursework(docs, catalog)...)
+			var warnings []string
+			res.Dropped, warnings = rv.GiveUp(docs, f)
+			res.Warnings = append(res.Warnings, warnings...)
 			break
 		}
 		opt.logf("sending the flagged claims back for correction")
 		prev, _ := json.MarshalIndent(docs, "", "  ")
-		docs, err = tailorDocs(ctx, p, prof.Text(), offer, analysis, lang, prev, problemList(docs, mergeIssues(issues, dups)), missingKeywordsList(analysis, gaps))
-		if err != nil {
+		if docs, err = tailorDocs(ctx, p, prof.Text(), offer, analysis, lang, prev, f.problems(docs), f.missingKeywords(analysis)); err != nil {
 			return nil, err
 		}
-		sortEducation(docs, analysis)
+		rv.Prepare(docs)
 	}
 
-	res.Warnings = append(res.Warnings, groundIdentity(prof, docs)...)
-	res.Warnings = append(res.Warnings, groundRankings(prof, docs)...)
-	res.Warnings = append(res.Warnings, groundProjectLinks(prof, docs)...)
-	cleanEducationTitles(docs)
-	cleanRecipient(docs, analysis)
-	res.Warnings = append(res.Warnings, fillSkillsLanguages(prof, docs)...)
-	// Requirements are assessed by the fact-checker only: it has no stake in the
-	// candidate looking good, and the writer has enough to do.
-	docs.Coverage = verifierCoverage
-	groundCoverage(prof, docs)
+	res.Warnings = append(res.Warnings, rv.Finalize(docs, report)...)
 	res.Docs = *docs
 	// Computed last, so that every change to the CV above is counted.
-	res.ats = atsInput{prof: prof, analysis: analysis, support: support}
+	res.ats = atsInput{prof: prof, analysis: analysis, support: report.Keywords}
 	res.RefreshATS()
 	return res, nil
 }
@@ -212,38 +194,20 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 	return &docs, nil
 }
 
-// check returns id -> reason for every claim that is not fully supported. It
-// combines mechanical quote checks with an independent model review.
-func check(ctx context.Context, p llm.Provider, prof *profile.Profile, offer string, analysis JobAnalysis, docs *Documents) (map[string]string, []Coverage, []KeywordSupport, error) {
+// verify asks the fact-checker for a verdict on every claim, the coverage of
+// the requirements and the support for each keyword. Some models stop part way
+// through a long list, so the claims they skip are asked about once more, on
+// their own.
+func verify(ctx context.Context, p llm.Provider, profile, offer string, analysis JobAnalysis, docs *Documents) (VerificationReport, error) {
 	claims := docs.claims()
-	issues := map[string]string{}
-
-	for _, c := range claims {
-		if c.NeedSource && len(c.Sources) == 0 {
-			issues[c.ID] = "no source quote given"
-			continue
-		}
-		if miss := prof.Missing(c.Sources); len(miss) > 0 {
-			issues[c.ID] = fmt.Sprintf("quoted source not found in the profile: %q", miss[0])
-			continue
-		}
-		if c.Ref.Kind == kindEducationDetail && refersToOtherEntry(c.Text) {
-			issues[c.ID] = "refers to another entry or to the other degree; every degree entry must stand on its own, so state the fact fully inside this entry or delete the line"
-		} else if c.Ref.Kind == kindEducationDetail && courseworkLeadHasRemark(c.Text) {
-			issues[c.ID] = "the coursework line must hold only the list of courses; move the remark in parentheses (for example the language of instruction) to its own line"
-		}
-	}
-
-	report, err := review(ctx, p, prof.Text(), offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
+	report, err := review(ctx, p, profile, offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
 	if err != nil {
-		return nil, nil, nil, err
+		return report, err
 	}
 	seen := map[string]bool{}
 	for _, v := range report.Verdicts {
 		seen[v.ID] = true
 	}
-	// Some models stop part way through a long list. The claims they skipped
-	// are asked about once more, on their own, before counting as unreviewed.
 	var skipped []flatClaim
 	for _, c := range claims {
 		if !seen[c.ID] {
@@ -251,35 +215,13 @@ func check(ctx context.Context, p llm.Provider, prof *profile.Profile, offer str
 		}
 	}
 	if len(skipped) > 0 {
-		more, err := review(ctx, p, prof.Text(), offer, "", skipped)
+		more, err := review(ctx, p, profile, offer, "", skipped)
 		if err != nil {
-			return nil, nil, nil, err
+			return report, err
 		}
 		report.Verdicts = append(report.Verdicts, more.Verdicts...)
 	}
-
-	seen = map[string]bool{}
-	for _, v := range report.Verdicts {
-		if seen[v.ID] {
-			continue
-		}
-		seen[v.ID] = true
-		if v.Status != "supported" {
-			if prev, ok := issues[v.ID]; ok {
-				issues[v.ID] = prev + "; " + v.Status + ": " + v.Reason
-			} else {
-				issues[v.ID] = v.Status + ": " + v.Reason
-			}
-		}
-	}
-	for _, c := range claims {
-		if !seen[c.ID] {
-			if _, ok := issues[c.ID]; !ok {
-				issues[c.ID] = "not reviewed by the fact-checker"
-			}
-		}
-	}
-	return issues, report.Coverage, report.Keywords, nil
+	return report, nil
 }
 
 // review asks the fact-checker for a verdict on each claim. extra holds the
@@ -315,144 +257,3 @@ func requirementsTag(a JobAnalysis) string {
 	}
 	return tag("requirements", b.String())
 }
-
-func problemList(docs *Documents, issues map[string]string) string {
-	var b strings.Builder
-	for _, c := range docs.claims() {
-		if reason, ok := issues[c.ID]; ok {
-			fmt.Fprintf(&b, "- %s: %q -> %s\n", c.ID, c.Text, reason)
-		}
-	}
-	return b.String()
-}
-
-func drop(docs *Documents, issues map[string]string) []Dropped {
-	var out []Dropped
-	bad := map[ClaimRef]bool{}
-	for _, c := range docs.claims() {
-		if reason, ok := issues[c.ID]; ok {
-			bad[c.Ref] = true
-			out = append(out, Dropped{ID: c.ID, Text: c.Text, Reason: reason})
-		}
-	}
-	docs.prune(bad)
-	return out
-}
-
-// groundIdentity makes sure the name and contact lines really come from the
-// profile; unverifiable contact lines are removed.
-func groundIdentity(prof *profile.Profile, docs *Documents) []string {
-	var warnings []string
-	if !prof.Has(docs.CV.Name) {
-		warnings = append(warnings, fmt.Sprintf("name %q was not found in the profile", docs.CV.Name))
-	}
-	var contact []string
-	for _, line := range docs.CV.Contact {
-		if prof.Has(line) {
-			contact = append(contact, line)
-		} else {
-			warnings = append(warnings, fmt.Sprintf("contact line %q is not in the profile and was removed", line))
-		}
-	}
-	docs.CV.Contact = contact
-	return warnings
-}
-
-// groundCoverage downgrades "covered" entries whose evidence quote is not in
-// the profile.
-func groundCoverage(prof *profile.Profile, docs *Documents) {
-	for i, c := range docs.Coverage {
-		if c.Covered && !prof.Has(c.Evidence) {
-			docs.Coverage[i].Covered = false
-			docs.Coverage[i].Evidence = ""
-		}
-	}
-}
-
-var (
-	crossReference = regexp.MustCompile(`(?i)\b(same as above|as above|as (?:in|for) the (?:previous|other|first|second)|the (?:previous|other|first|second) degree|both degrees|both of (?:my|the) degrees|likewise|similarly|also)\b`)
-)
-
-// refersToOtherEntry reports whether an education line points at another entry
-// ("also taught in English", "same as above"), which makes no sense when the
-// entries are read on their own.
-func refersToOtherEntry(text string) bool { return crossReference.MatchString(text) }
-
-// groundRankings clears a class ranking that is not in the profile (a wrong
-// ranking is worse than none) and reports it.
-func groundRankings(prof *profile.Profile, docs *Documents) []string {
-	var warnings []string
-	for i, e := range docs.CV.Education {
-		if e.Ranking != "" && !prof.Has(e.Ranking) {
-			warnings = append(warnings, fmt.Sprintf("class ranking %q for %q is not in the profile and was removed", e.Ranking, e.Degree))
-			docs.CV.Education[i].Ranking = ""
-		}
-	}
-	return warnings
-}
-
-// mergeIssues combines two id -> reason maps; reasons for the same id are joined.
-func mergeIssues(a, b map[string]string) map[string]string {
-	out := make(map[string]string, len(a)+len(b))
-	for id, r := range a {
-		out[id] = r
-	}
-	for id, r := range b {
-		if prev, ok := out[id]; ok {
-			out[id] = prev + "; " + r
-		} else {
-			out[id] = r
-		}
-	}
-	return out
-}
-
-var (
-	trailingParen = regexp.MustCompile(`\s*\(([^)]*)\)\s*$`)
-	yearRange     = regexp.MustCompile(`^\d{4}\s*[-–—]\s*(\d{4}|[A-Za-z]+)$`)
-)
-
-// cleanEducationTitles removes what weaker models paste into the degree name
-// from the profile heading: the dates ("(2020 - 2025)") and the institution
-// (", Oxford"), which the entry already shows in their own places.
-func cleanEducationTitles(docs *Documents) {
-	for i := range docs.CV.Education {
-		e := &docs.CV.Education[i]
-		d := strings.TrimSpace(e.Degree)
-		if m := trailingParen.FindStringSubmatch(d); m != nil {
-			inner := strings.TrimSpace(m[1])
-			if yearRange.MatchString(inner) || (e.Period != "" && normalize(inner) == normalize(e.Period)) {
-				d = strings.TrimSpace(trailingParen.ReplaceAllString(d, ""))
-			}
-		}
-		if k := strings.LastIndex(d, ", "); k > 0 {
-			tail := strings.TrimSpace(d[k+2:])
-			inst := " " + normalize(e.Institution) + " "
-			if t := normalize(tail); t != "" && len(strings.Fields(t)) <= 6 && strings.Contains(inst, " "+t+" ") {
-				d = strings.TrimSpace(d[:k])
-			}
-		}
-		if d != "" {
-			e.Degree = d
-		}
-	}
-}
-
-var identifierLike = regexp.MustCompile(`^[A-Za-z0-9]+(_[A-Za-z0-9]+)+$`)
-
-// cleanRecipient replaces an addressee that is a placeholder identifier
-// ("hiring_team") with the company name, or with nothing when the company is
-// unknown. The model returns such values when it treats the field as a label.
-func cleanRecipient(docs *Documents, a JobAnalysis) {
-	r := strings.TrimSpace(docs.Letter.Recipient)
-	if identifierLike.MatchString(r) || strings.Contains(r, "_") {
-		docs.Letter.Recipient = strings.TrimSpace(a.Company)
-	}
-}
-
-var courseworkRemark = regexp.MustCompile(`(?i)^\s*[^:()]*\b(coursework|courses)\s*\([^)]*\)\s*:`)
-
-// courseworkLeadHasRemark reports whether a coursework line carries a remark in
-// parentheses before its colon, as in "Relevant coursework (degree studied
-// entirely in English): ...".
-func courseworkLeadHasRemark(text string) bool { return courseworkRemark.MatchString(text) }
