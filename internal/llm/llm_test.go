@@ -440,3 +440,17 @@ func TestExtractJSONSkipsThinking(t *testing.T) {
 		t.Fatalf("out=%s err=%v", out, err)
 	}
 }
+
+func TestCompatDoesNotRetryDailyQuota(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, `{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits","code":429}}`, http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "daily request quota") || calls.Load() != 1 {
+		t.Fatalf("calls=%d err=%v", calls.Load(), err)
+	}
+}

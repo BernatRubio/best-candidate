@@ -179,6 +179,11 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 
 	if resp.StatusCode != http.StatusOK {
 		apiErr := fmt.Errorf("%s API error %d: %s", o.cfg.Name, resp.StatusCode, apiMessage(data))
+		if resp.StatusCode == http.StatusTooManyRequests && strings.Contains(string(data), "per-day") {
+			// A daily quota (such as OpenRouter's free-models-per-day) does not
+			// clear within any retry wait.
+			return nil, fmt.Errorf("%w (the daily request quota is used up: try again tomorrow or use another model)", apiErr)
+		}
 		switch resp.StatusCode {
 		case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
 			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
