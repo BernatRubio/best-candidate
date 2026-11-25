@@ -89,8 +89,19 @@ The command exits with status 2 if it had to remove statements it could not veri
 | `openai-compatible` | `BC_API_KEY` | `--base-url` and `--model` required |
 
 `BC_PROVIDER`, `BC_MODEL` and `BC_BASE_URL` set the same options from the environment. If a server
-rejects strict JSON-schema output, set `BC_JSON_MODE=object`. Small local models follow the
+rejects strict JSON-schema output, set `BC_JSON_MODE=tool` (the schema is sent as a forced tool call)
+or `BC_JSON_MODE=object` (the schema is put in the prompt). `BC_MAX_TOKENS` and `BC_REASONING_EFFORT`
+(`low`, `medium`, `high`) are sent to OpenAI-compatible servers when set. Small local models follow the
 honesty rules noticeably worse.
+
+For example, NVIDIA Nemotron 3 Ultra on OpenRouter's free tier, which ignores `response_format` but
+supports tools:
+
+```sh
+BC_API_KEY=sk-or-... BC_JSON_MODE=tool BC_MAX_TOKENS=32000 ./best-candidate generate \
+  --provider openai-compatible --base-url https://openrouter.ai/api/v1 \
+  --model nvidia/nemotron-3-ultra-550b-a55b:free --job offer.md
+```
 
 ## How statements are verified
 

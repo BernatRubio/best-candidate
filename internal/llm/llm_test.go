@@ -356,3 +356,82 @@ func TestAuthErrorsExplainTheKey(t *testing.T) {
 		t.Fatalf("rejected key must be explained: %v", err)
 	}
 }
+
+func TestCompatToolMode(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+		b, _ := json.Marshal(map[string]any{"choices": []map[string]any{{
+			"message": map[string]any{"content": "", "tool_calls": []map[string]any{{
+				"type": "function", "function": map[string]string{"name": "submit", "arguments": `{"ok":true}`},
+			}}},
+			"finish_reason": "tool_calls",
+		}}})
+		_, _ = w.Write(b)
+	}))
+	defer srv.Close()
+
+	o := newCompat(t, srv.URL, JSONModeTool)
+	o.cfg.MaxTokens, o.cfg.ReasoningEffort = 1000, "high"
+	out, err := o.GenerateJSON(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `{"ok":true}` {
+		t.Fatalf("out = %s", out)
+	}
+	if _, ok := got["response_format"]; ok {
+		t.Fatal("tool mode must not send response_format")
+	}
+	tool := got["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
+	if tool["name"] != "submit" || tool["parameters"].(map[string]any)["type"] != "object" {
+		t.Fatalf("tools = %v", got["tools"])
+	}
+	if got["tool_choice"].(map[string]any)["function"].(map[string]any)["name"] != "submit" {
+		t.Fatalf("tool_choice = %v", got["tool_choice"])
+	}
+	if got["max_tokens"] != float64(1000) || got["reasoning"].(map[string]any)["effort"] != "high" {
+		t.Fatalf("max_tokens=%v reasoning=%v", got["max_tokens"], got["reasoning"])
+	}
+}
+
+func TestCompatToolModeFallsBackToContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(chatReply("<think>maybe {a}</think>\n{\"ok\":true}", "stop")))
+	}))
+	defer srv.Close()
+
+	out, err := newCompat(t, srv.URL, JSONModeTool).GenerateJSON(context.Background(), req)
+	if err != nil || string(out) != `{"ok":true}` {
+		t.Fatalf("out=%s err=%v", out, err)
+	}
+}
+
+func TestCompatHonoursRetryAfter(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, `{"error":{"message":"slow down"}}`, http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(chatReply(`{"ok":true}`, "stop")))
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	if _, err := newCompat(t, srv.URL, "").GenerateJSON(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < time.Second {
+		t.Fatalf("Retry-After ignored: waited %s", d)
+	}
+}
+
+func TestExtractJSONSkipsThinking(t *testing.T) {
+	out, err := ExtractJSON("<think>the schema wants {x}</think>```json\n{\"a\":1}\n```")
+	if err != nil || string(out) != `{"a":1}` {
+		t.Fatalf("out=%s err=%v", out, err)
+	}
+}

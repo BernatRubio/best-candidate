@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -46,37 +47,52 @@ func New(c Config) (Provider, error) {
 		return nil, fmt.Errorf("provider %q needs a model: pass --model or set BC_MODEL", name)
 	}
 	mode := firstNonEmpty(os.Getenv("BC_JSON_MODE"), JSONModeSchema)
+	maxTokens := 0
+	if v := os.Getenv("BC_MAX_TOKENS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("BC_MAX_TOKENS must be a positive number, got %q", v)
+		}
+		maxTokens = n
+	}
+	effort := os.Getenv("BC_REASONING_EFFORT")
 
 	switch name {
 	case "anthropic", "claude":
 		return NewAnthropic(c.Model)
 	case "openai":
 		return NewOpenAICompat(OpenAICompatConfig{
-			Name:        "openai",
-			BaseURL:     firstNonEmpty(c.BaseURL, "https://api.openai.com/v1"),
-			APIKey:      firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
-			KeyRequired: "OPENAI_API_KEY",
-			Model:       c.Model,
-			JSONMode:    mode,
+			Name:            "openai",
+			BaseURL:         firstNonEmpty(c.BaseURL, "https://api.openai.com/v1"),
+			APIKey:          firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
+			KeyRequired:     "OPENAI_API_KEY",
+			Model:           c.Model,
+			JSONMode:        mode,
+			MaxTokens:       maxTokens,
+			ReasoningEffort: effort,
 		})
 	case "ollama":
 		return NewOpenAICompat(OpenAICompatConfig{
-			Name:     "ollama",
-			BaseURL:  firstNonEmpty(c.BaseURL, "http://localhost:11434/v1"),
-			APIKey:   os.Getenv("BC_API_KEY"),
-			Model:    c.Model,
-			JSONMode: mode,
+			Name:            "ollama",
+			BaseURL:         firstNonEmpty(c.BaseURL, "http://localhost:11434/v1"),
+			APIKey:          os.Getenv("BC_API_KEY"),
+			Model:           c.Model,
+			JSONMode:        mode,
+			MaxTokens:       maxTokens,
+			ReasoningEffort: effort,
 		})
 	case "openai-compatible", "compatible", "compat":
 		if c.BaseURL == "" {
 			return nil, fmt.Errorf("provider %q needs a base URL: pass --base-url or set BC_BASE_URL", name)
 		}
 		return NewOpenAICompat(OpenAICompatConfig{
-			Name:     "compat",
-			BaseURL:  c.BaseURL,
-			APIKey:   firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
-			Model:    c.Model,
-			JSONMode: mode,
+			Name:            "compat",
+			BaseURL:         c.BaseURL,
+			APIKey:          firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
+			Model:           c.Model,
+			JSONMode:        mode,
+			MaxTokens:       maxTokens,
+			ReasoningEffort: effort,
 		})
 	case "gemini", "google":
 		return NewGemini(c.Model)
@@ -105,9 +121,13 @@ func firstNonEmpty(vals ...string) string {
 }
 
 // ExtractJSON pulls one JSON value out of model text that may be wrapped in a
-// markdown code fence or surrounded by prose, as weaker models tend to do.
+// markdown code fence or surrounded by prose, as weaker models tend to do. A
+// reasoning block (<think>...</think>) that leaked into the text is skipped.
 func ExtractJSON(text string) (json.RawMessage, error) {
 	s := strings.TrimSpace(text)
+	if i := strings.LastIndex(s, "</think>"); i >= 0 {
+		s = strings.TrimSpace(s[i+len("</think>"):])
+	}
 	if strings.HasPrefix(s, "```") {
 		s = strings.TrimPrefix(s, "```")
 		s = strings.TrimPrefix(s, "json")

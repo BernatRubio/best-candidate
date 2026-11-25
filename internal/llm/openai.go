@@ -20,7 +20,14 @@ const (
 	// JSONModeObject asks only for a JSON object and puts the schema in the
 	// prompt, for servers that do not support json_schema.
 	JSONModeObject = "object"
+	// JSONModeTool forces a call to a "submit" tool whose parameters are the
+	// schema, for servers that support tools but not response_format (such as
+	// OpenRouter's free endpoints).
+	JSONModeTool = "tool"
 )
+
+// submitTool is the tool the model must call in JSONModeTool.
+const submitTool = "submit"
 
 // OpenAICompatConfig configures a client for the /chat/completions API shared
 // by OpenAI, Ollama, OpenRouter, Groq, LM Studio, vLLM and others.
@@ -31,6 +38,9 @@ type OpenAICompatConfig struct {
 	KeyRequired string // when set and APIKey is empty, fail naming this env var
 	Model       string
 	JSONMode    string
+	// MaxTokens and ReasoningEffort are sent only when set.
+	MaxTokens       int
+	ReasoningEffort string
 }
 
 // OpenAICompat talks to any OpenAI-compatible chat completions endpoint.
@@ -48,9 +58,9 @@ func NewOpenAICompat(cfg OpenAICompatConfig) (*OpenAICompat, error) {
 	switch cfg.JSONMode {
 	case "":
 		cfg.JSONMode = JSONModeSchema
-	case JSONModeSchema, JSONModeObject:
+	case JSONModeSchema, JSONModeObject, JSONModeTool:
 	default:
-		return nil, fmt.Errorf("BC_JSON_MODE must be %q or %q, got %q", JSONModeSchema, JSONModeObject, cfg.JSONMode)
+		return nil, fmt.Errorf("BC_JSON_MODE must be %q, %q or %q, got %q", JSONModeSchema, JSONModeObject, JSONModeTool, cfg.JSONMode)
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &OpenAICompat{
@@ -69,8 +79,14 @@ const maxAttempts = 5
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
-			Refusal string `json:"refusal"`
+			Content   string `json:"content"`
+			Refusal   string `json:"refusal"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -82,13 +98,24 @@ type chatResponse struct {
 // GenerateJSON requests a JSON document matching req.Schema. Rate limits and
 // transient server errors are retried with backoff.
 func (o *OpenAICompat) GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error) {
+	payload := map[string]any{"model": o.cfg.Model}
 	system := req.System
-	var format map[string]any
-	if o.cfg.JSONMode == JSONModeObject {
+	switch o.cfg.JSONMode {
+	case JSONModeObject:
 		system += "\n\nRespond with a single JSON object that validates against this JSON schema, and nothing else (no prose, no code fences):\n" + string(req.Schema)
-		format = map[string]any{"type": "json_object"}
-	} else {
-		format = map[string]any{
+		payload["response_format"] = map[string]any{"type": "json_object"}
+	case JSONModeTool:
+		payload["tools"] = []map[string]any{{
+			"type": "function",
+			"function": map[string]any{
+				"name":        submitTool,
+				"description": "Submit the final answer. Its arguments are the whole JSON document.",
+				"parameters":  req.Schema,
+			},
+		}}
+		payload["tool_choice"] = map[string]any{"type": "function", "function": map[string]string{"name": submitTool}}
+	default:
+		payload["response_format"] = map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{
 				"name":   "output",
@@ -97,44 +124,26 @@ func (o *OpenAICompat) GenerateJSON(ctx context.Context, req Request) (json.RawM
 			},
 		}
 	}
-	body, err := json.Marshal(map[string]any{
-		"model": o.cfg.Model,
-		"messages": []map[string]string{
-			{"role": "system", "content": system},
-			{"role": "user", "content": req.User},
-		},
-		"response_format": format,
-	})
+	payload["messages"] = []map[string]string{
+		{"role": "system", "content": system},
+		{"role": "user", "content": req.User},
+	}
+	if o.cfg.MaxTokens > 0 {
+		payload["max_tokens"] = o.cfg.MaxTokens
+	}
+	if o.cfg.ReasoningEffort != "" {
+		payload["reasoning"] = map[string]string{"effort": o.cfg.ReasoningEffort}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-
-	var lastErr error
-	notify := stderrNotify(o.cfg.Name, maxAttempts)
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
-			wait := o.backoff << (attempt - 1)
-			if ra, ok := lastErr.(*retryableError); ok && ra.after > 0 {
-				wait = ra.after
-			}
-			notify(lastErr, wait)
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(wait):
-			}
-		}
-		out, err := o.once(ctx, body)
-		if err == nil {
-			return out, nil
-		}
+	transient := func(err error) bool {
 		var re *retryableError
-		if !errors.As(err, &re) {
-			return nil, err
-		}
-		lastErr = err
+		return errors.As(err, &re)
 	}
-	return nil, lastErr
+	return retry(ctx, maxAttempts, o.backoff, transient, stderrNotify(o.cfg.Name, maxAttempts),
+		func() (json.RawMessage, error) { return o.once(ctx, body) })
 }
 
 type retryableError struct {
@@ -142,8 +151,9 @@ type retryableError struct {
 	after time.Duration
 }
 
-func (e *retryableError) Error() string { return e.err.Error() }
-func (e *retryableError) Unwrap() error { return e.err }
+func (e *retryableError) Error() string             { return e.err.Error() }
+func (e *retryableError) Unwrap() error             { return e.err }
+func (e *retryableError) RetryAfter() time.Duration { return e.after }
 
 func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.cfg.BaseURL+"/chat/completions", bytes.NewReader(body))
@@ -179,7 +189,7 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 			}
 			return nil, re
 		case http.StatusBadRequest:
-			return nil, fmt.Errorf("%w (if the server does not support json_schema output, set BC_JSON_MODE=object)", apiErr)
+			return nil, fmt.Errorf("%w (if the server does not support json_schema output, set BC_JSON_MODE=tool or BC_JSON_MODE=object)", apiErr)
 		case http.StatusUnauthorized, http.StatusForbidden:
 			if o.cfg.APIKey == "" {
 				return nil, fmt.Errorf("%w (no API key was sent: export BC_API_KEY, or OPENAI_API_KEY, in this shell)", apiErr)
@@ -208,6 +218,11 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 		return nil, errors.New("the response was cut off at the token limit; the document is too large for this model or its context is too small")
 	case "content_filter":
 		return nil, errors.New("the response was blocked by the provider's content filter")
+	}
+	for _, tc := range c.Message.ToolCalls {
+		if tc.Function.Name == submitTool || len(c.Message.ToolCalls) == 1 {
+			return ExtractJSON(tc.Function.Arguments)
+		}
 	}
 	return ExtractJSON(c.Message.Content)
 }

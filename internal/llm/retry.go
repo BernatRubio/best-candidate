@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -9,7 +10,9 @@ import (
 
 // retry runs fn up to attempts times, sleeping base, 2*base, 4*base, ... between
 // tries while transient(err) holds. It stops early when ctx is cancelled and
-// returns the last error otherwise. notify (optional) is told before each wait.
+// returns the last error otherwise. An error with a RetryAfter() duration above
+// zero (a server's Retry-After) replaces the computed wait. notify (optional) is
+// told before each wait.
 func retry[T any](ctx context.Context, attempts int, base time.Duration, transient func(error) bool,
 	notify func(err error, wait time.Duration), fn func() (T, error)) (T, error) {
 	var zero T
@@ -27,6 +30,10 @@ func retry[T any](ctx context.Context, attempts int, base time.Duration, transie
 			return zero, err
 		}
 		wait := base << i
+		var ra interface{ RetryAfter() time.Duration }
+		if errors.As(err, &ra) && ra.RetryAfter() > 0 {
+			wait = ra.RetryAfter()
+		}
 		if notify != nil {
 			notify(err, wait)
 		}
