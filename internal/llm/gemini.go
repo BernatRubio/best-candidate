@@ -12,9 +12,10 @@ import (
 	"google.golang.org/genai"
 )
 
+// geminiRetry waits 3s, 6s, 12s and 24s.
+var geminiRetry = RetryPolicy{Attempts: 5, Base: 3 * time.Second, Transient: isTransientGemini}
+
 const (
-	geminiAttempts = 5
-	geminiBackoff  = 3 * time.Second // waits 3s, 6s, 12s, 24s
 	// geminiTimeout bounds one attempt: the SDK client has no timeout of its own, so a
 	// stalled connection would otherwise wait forever.
 	geminiTimeout = 4 * time.Minute
@@ -24,7 +25,6 @@ const (
 type Gemini struct {
 	client  *genai.Client
 	model   string
-	backoff time.Duration
 	timeout time.Duration
 }
 
@@ -42,7 +42,7 @@ func NewGemini(model string) (*Gemini, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating Gemini client: %w", err)
 	}
-	return &Gemini{client: client, model: model, backoff: geminiBackoff, timeout: geminiTimeout}, nil
+	return &Gemini{client: client, model: model, timeout: geminiTimeout}, nil
 }
 
 func (g *Gemini) Name() string { return "gemini/" + g.model }
@@ -66,8 +66,8 @@ func isTransientGemini(err error) bool {
 	return false
 }
 
-// GenerateJSON asks Gemini for a JSON document matching req.Schema. Rate limits
-// and overload errors are retried with exponential backoff.
+// GenerateJSON asks Gemini for a JSON document matching req.Schema. One call is
+// bounded by the timeout; retries are added by WithRetry.
 func (g *Gemini) GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error) {
 	var schema map[string]any
 	if err := json.Unmarshal(req.Schema, &schema); err != nil {
@@ -81,13 +81,9 @@ func (g *Gemini) GenerateJSON(ctx context.Context, req Request) (json.RawMessage
 	}
 	contents := []*genai.Content{genai.NewContentFromText(req.User, genai.RoleUser)}
 
-	resp, err := retry(ctx, geminiAttempts, g.backoff, isTransientGemini,
-		stderrNotify("gemini", geminiAttempts),
-		func() (*genai.GenerateContentResponse, error) {
-			attempt, cancel := context.WithTimeout(ctx, g.timeout)
-			defer cancel()
-			return g.client.Models.GenerateContent(attempt, g.model, contents, cfg)
-		})
+	attempt, cancel := context.WithTimeout(ctx, g.timeout)
+	defer cancel()
+	resp, err := g.client.Models.GenerateContent(attempt, g.model, contents, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("gemini request: %w", err)
 	}

@@ -32,8 +32,13 @@ func newCompat(t *testing.T, url, mode string) *OpenAICompat {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o.backoff = time.Millisecond
 	return o
+}
+
+// fast applies pol with millisecond waits.
+func fast(p Provider, pol RetryPolicy) Provider {
+	pol.Base = time.Millisecond
+	return WithRetry(p, pol)
 }
 
 var req = Request{System: "be honest", User: "hello", Schema: json.RawMessage(`{"type":"object"}`)}
@@ -109,7 +114,7 @@ func TestCompatRetriesTransientErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := newCompat(t, srv.URL, "").GenerateJSON(context.Background(), req); err != nil {
+	if _, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 3 {
@@ -125,11 +130,11 @@ func TestCompatGivesUpAfterRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newCompat(t, srv.URL, "").GenerateJSON(context.Background(), req)
+	_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "overloaded") {
 		t.Fatalf("err = %v", err)
 	}
-	if calls.Load() != maxAttempts {
+	if calls.Load() != int32(compatRetry.Attempts) {
 		t.Fatalf("calls = %d", calls.Load())
 	}
 }
@@ -142,7 +147,7 @@ func TestCompatDoesNotRetryClientErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newCompat(t, srv.URL, "").GenerateJSON(context.Background(), req)
+	_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "BC_JSON_MODE=object") {
 		t.Fatalf("err should hint at BC_JSON_MODE: %v", err)
 	}
@@ -163,7 +168,7 @@ func TestCompatRefusalAndTruncation(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			_, err := newCompat(t, srv.URL, "").GenerateJSON(context.Background(), req)
+			_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
@@ -421,7 +426,7 @@ func TestCompatHonoursRetryAfter(t *testing.T) {
 	defer srv.Close()
 
 	start := time.Now()
-	if _, err := newCompat(t, srv.URL, "").GenerateJSON(context.Background(), req); err != nil {
+	if _, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	if d := time.Since(start); d < time.Second {

@@ -45,9 +45,8 @@ type OpenAICompatConfig struct {
 
 // OpenAICompat talks to any OpenAI-compatible chat completions endpoint.
 type OpenAICompat struct {
-	cfg     OpenAICompatConfig
-	http    *http.Client
-	backoff time.Duration
+	cfg  OpenAICompatConfig
+	http *http.Client
 }
 
 // NewOpenAICompat validates the configuration and builds the client.
@@ -64,17 +63,22 @@ func NewOpenAICompat(cfg OpenAICompatConfig) (*OpenAICompat, error) {
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &OpenAICompat{
-		cfg:     cfg,
-		http:    &http.Client{Timeout: 10 * time.Minute},
-		backoff: 2 * time.Second,
+		cfg:  cfg,
+		http: &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 
 func (o *OpenAICompat) Name() string { return o.cfg.Name + "/" + o.cfg.Model }
 
-// maxAttempts bounds retries of rate limits and overload: with a 2s base the
-// waits are 2s, 4s, 8s and 16s (or the server's Retry-After, up to 30s).
-const maxAttempts = 5
+// compatRetry retries rate limits and overload: the waits are 2s, 4s, 8s and
+// 16s, or the server's Retry-After (up to 30s).
+var compatRetry = RetryPolicy{Attempts: 5, Base: 2 * time.Second, Transient: isTransientCompat}
+
+// isTransientCompat reports whether a call failed in a way worth retrying.
+func isTransientCompat(err error) bool {
+	var re *retryableError
+	return errors.As(err, &re)
+}
 
 type chatResponse struct {
 	Choices []struct {
@@ -96,7 +100,7 @@ type chatResponse struct {
 }
 
 // GenerateJSON requests a JSON document matching req.Schema. Rate limits and
-// transient server errors are retried with backoff.
+// transient server errors fail with a retryableError (see WithRetry).
 func (o *OpenAICompat) GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error) {
 	payload := map[string]any{"model": o.cfg.Model}
 	system := req.System
@@ -138,12 +142,7 @@ func (o *OpenAICompat) GenerateJSON(ctx context.Context, req Request) (json.RawM
 	if err != nil {
 		return nil, err
 	}
-	transient := func(err error) bool {
-		var re *retryableError
-		return errors.As(err, &re)
-	}
-	return retry(ctx, maxAttempts, o.backoff, transient, stderrNotify(o.cfg.Name, maxAttempts),
-		func() (json.RawMessage, error) { return o.once(ctx, body) })
+	return o.once(ctx, body)
 }
 
 type retryableError struct {

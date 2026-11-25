@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -44,6 +45,29 @@ func retry[T any](ctx context.Context, attempts int, base time.Duration, transie
 		}
 	}
 	return zero, err
+}
+
+// RetryPolicy says how a provider's failed calls are retried.
+type RetryPolicy struct {
+	Attempts  int
+	Base      time.Duration // first wait; each next one doubles
+	Transient func(error) bool
+}
+
+// WithRetry wraps a provider so that calls failing with a transient error are
+// retried with backoff, and each wait is announced on stderr.
+func WithRetry(p Provider, pol RetryPolicy) Provider {
+	return &retrying{Provider: p, pol: pol}
+}
+
+type retrying struct {
+	Provider
+	pol RetryPolicy
+}
+
+func (r *retrying) GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error) {
+	return retry(ctx, r.pol.Attempts, r.pol.Base, r.pol.Transient, stderrNotify(r.Name(), r.pol.Attempts),
+		func() (json.RawMessage, error) { return r.Provider.GenerateJSON(ctx, req) })
 }
 
 // stderrNotify prints a one-line retry notice for the command line user.

@@ -39,7 +39,7 @@ func TestGeminiHangingServerTimesOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &Gemini{client: client, model: "m", backoff: time.Millisecond, timeout: 60 * time.Millisecond}
+	g := fast(&Gemini{client: client, model: "m", timeout: 60 * time.Millisecond}, geminiRetry)
 
 	done := make(chan error, 1)
 	go func() {
@@ -54,8 +54,8 @@ func TestGeminiHangingServerTimesOut(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("GenerateJSON hung despite the per-attempt timeout")
 	}
-	if calls.Load() != geminiAttempts {
-		t.Fatalf("attempts = %d, want %d", calls.Load(), geminiAttempts)
+	if calls.Load() != int32(geminiRetry.Attempts) {
+		t.Fatalf("attempts = %d, want %d", calls.Load(), geminiRetry.Attempts)
 	}
 }
 

@@ -61,7 +61,7 @@ func New(c Config) (Provider, error) {
 	case "anthropic", "claude":
 		return NewAnthropic(c.Model)
 	case "openai":
-		return NewOpenAICompat(OpenAICompatConfig{
+		return retried(NewOpenAICompat(OpenAICompatConfig{
 			Name:            "openai",
 			BaseURL:         firstNonEmpty(c.BaseURL, "https://api.openai.com/v1"),
 			APIKey:          firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
@@ -70,9 +70,9 @@ func New(c Config) (Provider, error) {
 			JSONMode:        mode,
 			MaxTokens:       maxTokens,
 			ReasoningEffort: effort,
-		})
+		}))
 	case "ollama":
-		return NewOpenAICompat(OpenAICompatConfig{
+		return retried(NewOpenAICompat(OpenAICompatConfig{
 			Name:            "ollama",
 			BaseURL:         firstNonEmpty(c.BaseURL, "http://localhost:11434/v1"),
 			APIKey:          os.Getenv("BC_API_KEY"),
@@ -80,12 +80,12 @@ func New(c Config) (Provider, error) {
 			JSONMode:        mode,
 			MaxTokens:       maxTokens,
 			ReasoningEffort: effort,
-		})
+		}))
 	case "openai-compatible", "compatible", "compat":
 		if c.BaseURL == "" {
 			return nil, fmt.Errorf("provider %q needs a base URL: pass --base-url or set BC_BASE_URL", name)
 		}
-		return NewOpenAICompat(OpenAICompatConfig{
+		return retried(NewOpenAICompat(OpenAICompatConfig{
 			Name:            "compat",
 			BaseURL:         c.BaseURL,
 			APIKey:          firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
@@ -93,12 +93,24 @@ func New(c Config) (Provider, error) {
 			JSONMode:        mode,
 			MaxTokens:       maxTokens,
 			ReasoningEffort: effort,
-		})
+		}))
 	case "gemini", "google":
-		return NewGemini(c.Model)
+		g, err := NewGemini(c.Model)
+		if err != nil {
+			return nil, err
+		}
+		return WithRetry(g, geminiRetry), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q (supported: %s)", c.Provider, Supported)
 	}
+}
+
+// retried wraps a new OpenAI-compatible client in its retry policy.
+func retried(o *OpenAICompat, err error) (Provider, error) {
+	if err != nil {
+		return nil, err
+	}
+	return WithRetry(o, compatRetry), nil
 }
 
 // FromEnv builds a provider from BC_PROVIDER / BC_MODEL / BC_BASE_URL, using
