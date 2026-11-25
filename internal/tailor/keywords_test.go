@@ -114,7 +114,7 @@ func TestKeywordGapAfterLastRepairIsOnlyReported(t *testing.T) {
 }
 
 func TestATSPromptsAndSchema(t *testing.T) {
-	for _, want := range []string{"exact form", "missing_keywords", "Skills lines", "No stuffing", "Writing the bullets", "word for word"} {
+	for _, want := range []string{"exact form", "missing_keywords", "Keywords and bullets", "at most three times", "Rewrite every bullet", "as the profile wrote it"} {
 		if !strings.Contains(tailorPrompt, want) {
 			t.Errorf("tailor prompt lost %q", want)
 		}

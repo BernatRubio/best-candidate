@@ -51,10 +51,6 @@ func baseDocs() Documents {
 			},
 			Closing: "Kind regards,", Signature: "Ada Example",
 		},
-		Coverage: []Coverage{
-			{Requirement: "Go", Covered: true, Evidence: "Built REST APIs in Go"},
-			{Requirement: "Kubernetes", Covered: true, Evidence: "Ran Kubernetes clusters"},
-		},
 	}
 }
 
@@ -70,11 +66,24 @@ func allSupported(docs Documents) func(llm.Request) (json.RawMessage, error) {
 
 func TestRunCleanPath(t *testing.T) {
 	docs := baseDocs()
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	verify := func(r llm.Request) (json.RawMessage, error) {
+		raw, _ := allSupported(docs)(r)
+		var rep VerificationReport
+		_ = json.Unmarshal(raw, &rep)
+		rep.Coverage = []Coverage{
+			{Requirement: "Go", Covered: true, Evidence: "Built REST APIs in Go"},
+			{Requirement: "Kubernetes", Covered: true, Evidence: "Ran Kubernetes clusters"},
+		}
+		return json.Marshal(rep)
+	}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), verify)
 
 	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(string(fake.Calls[1].Schema), `"coverage"`) {
+		t.Fatal("the writer must not be asked for coverage")
 	}
 	if len(fake.Calls) != 3 {
 		t.Fatalf("want 3 model calls, got %d", len(fake.Calls))
@@ -244,7 +253,7 @@ func TestPromptMatchesSchema(t *testing.T) {
 }
 
 func TestPromptsCoverKeyBehaviours(t *testing.T) {
-	for _, want := range []string{"visibly written for this job", "contribute", "Tested", "validated"} {
+	for _, want := range []string{"visibly written for this job", "contribute", "tested", "validated"} {
 		if !strings.Contains(tailorPrompt, want) {
 			t.Errorf("tailor prompt lost %q", want)
 		}
@@ -434,10 +443,10 @@ func TestProjectLinkMustBeInProfile(t *testing.T) {
 	}
 }
 
-// When the writer returns no coverage at all, the fact-checker's assessment is
-// used, and its evidence quotes are still checked against the profile.
+// The fact-checker assesses the requirements, and its evidence quotes are
+// still checked against the profile.
 func TestVerifierCoverageIsUsed(t *testing.T) {
-	docs := minimalDocs() // no coverage from the writer
+	docs := minimalDocs()
 	verify := func(req llm.Request) (json.RawMessage, error) {
 		if !strings.Contains(req.User, "must have: Go") || !strings.Contains(req.User, "must have: Kubernetes") {
 			t.Errorf("verifier was not given the requirements:\n%s", req.User)
@@ -621,7 +630,7 @@ func TestRunOrdersDegreesByRelevance(t *testing.T) {
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), func(llm.Request) (json.RawMessage, error) {
 		// The reviewer sees the claims in the sorted order.
 		return allSupported(Documents{CV: CV{Education: []Education{docs.CV.Education[1], docs.CV.Education[0]}}})(llm.Request{})
-	})
+	}, llm.Reply(VerificationReport{}))
 	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -631,5 +640,38 @@ func TestRunOrdersDegreesByRelevance(t *testing.T) {
 	}
 	if !strings.Contains(fake.Calls[2].User, "id: cv.education[0]\ntext: Computer Science") {
 		t.Fatalf("the verifier must see the sorted order:\n%s", fake.Calls[2].User)
+	}
+}
+
+// A reviewer that stops part way through the list is asked again about the
+// claims it skipped, and only those, before they count as unreviewed.
+func TestSkippedClaimsAreReviewedAgain(t *testing.T) {
+	docs := baseDocs()
+	claims := docs.claims()
+	first := func(llm.Request) (json.RawMessage, error) {
+		return json.Marshal(VerificationReport{Verdicts: []Verdict{{ID: claims[0].ID, Status: "supported"}}})
+	}
+	var second llm.Request
+	rest := func(r llm.Request) (json.RawMessage, error) {
+		second = r
+		var rep VerificationReport
+		for _, c := range claims[1:] {
+			rep.Verdicts = append(rep.Verdicts, Verdict{ID: c.ID, Status: "supported"})
+		}
+		return json.Marshal(rep)
+	}
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), first, rest)
+	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Dropped) != 0 {
+		t.Fatalf("dropped = %+v", res.Dropped)
+	}
+	if strings.Contains(second.User, "id: "+claims[0].ID+"\n") || !strings.Contains(second.User, "id: "+claims[1].ID+"\n") {
+		t.Fatalf("the second review must hold only the skipped claims:\n%s", second.User)
+	}
+	if strings.Contains(second.User, "<requirements>") {
+		t.Fatal("requirements are assessed once, not again")
 	}
 }

@@ -136,11 +136,9 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	cleanEducationTitles(docs)
 	cleanRecipient(docs, analysis)
 	res.Warnings = append(res.Warnings, fillSkillsLanguages(profile, docs)...)
-	// The fact-checker's assessment of the requirements is preferred: it has no
-	// stake in the candidate looking good, and some writers skip it entirely.
-	if len(verifierCoverage) > 0 {
-		docs.Coverage = verifierCoverage
-	}
+	// Requirements are assessed by the fact-checker only: it has no stake in the
+	// candidate looking good, and the writer has enough to do.
+	docs.Coverage = verifierCoverage
 	groundCoverage(g, docs)
 	res.Docs = *docs
 	return res, nil
@@ -149,7 +147,7 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 func analyze(ctx context.Context, p llm.Provider, offer string) (JobAnalysis, error) {
 	raw, err := p.GenerateJSON(ctx, llm.Request{
 		System: analyzePrompt,
-		User:   tag("job_offer", offer),
+		User:   tag("job_offer", offer) + "Extract the structure of this job offer.",
 		Schema: llm.SchemaFor[JobAnalysis](),
 	})
 	if err != nil {
@@ -158,22 +156,32 @@ func analyze(ctx context.Context, p llm.Provider, offer string) (JobAnalysis, er
 	return decode[JobAnalysis](raw, "job analysis")
 }
 
+// draft is what the writer returns: Documents without the coverage, which the
+// fact-checker assesses.
+type draft struct {
+	CV     CV     `json:"cv"`
+	Letter Letter `json:"letter"`
+}
+
 func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a JobAnalysis, lang string, prev []byte, problems, missing string) (*Documents, error) {
 	analysisJSON, _ := json.MarshalIndent(a, "", "  ")
 	user := tag("profile", profile) +
 		tag("job_offer", offer) +
 		tag("job_analysis", string(analysisJSON)) +
 		tag("language", lang)
+	task := "Write the tailored CV and cover letter for this offer, following every rule, then return the JSON document."
 	if prev != nil {
 		user += tag("previous_output", string(prev)) + tag("problems", problems)
 		if missing != "" {
 			user += tag("missing_keywords", missing)
 		}
+		task = "Repair <previous_output> as described under Repairs and return the complete corrected JSON document."
 	}
+	user += task
 	raw, err := p.GenerateJSON(ctx, llm.Request{
 		System: tailorPrompt,
 		User:   user,
-		Schema: llm.SchemaFor[Documents](),
+		Schema: llm.SchemaFor[draft](),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tailoring documents: %w", err)
@@ -207,25 +215,35 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 		}
 	}
 
-	var list strings.Builder
-	for _, c := range claims {
-		fmt.Fprintf(&list, "id: %s\ntext: %s\ncited: %s\n\n", c.ID, c.Text, strings.Join(c.Sources, " / "))
-	}
-	raw, err := p.GenerateJSON(ctx, llm.Request{
-		System: verifyPrompt,
-		User:   tag("profile", profile) + tag("job_offer", offer) + requirementsTag(analysis) + keywordsTag(analysis) + tag("claims", list.String()),
-		Schema: llm.SchemaFor[VerificationReport](),
-	})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("verifying documents: %w", err)
-	}
-	report, err := decode[VerificationReport](raw, "verification report")
+	report, err := review(ctx, p, profile, offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
 	seen := map[string]bool{}
 	for _, v := range report.Verdicts {
+		seen[v.ID] = true
+	}
+	// Some models stop part way through a long list. The claims they skipped
+	// are asked about once more, on their own, before counting as unreviewed.
+	var skipped []flatClaim
+	for _, c := range claims {
+		if !seen[c.ID] {
+			skipped = append(skipped, c)
+		}
+	}
+	if len(skipped) > 0 {
+		more, err := review(ctx, p, profile, offer, "", skipped)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		report.Verdicts = append(report.Verdicts, more.Verdicts...)
+	}
+
+	seen = map[string]bool{}
+	for _, v := range report.Verdicts {
+		if seen[v.ID] {
+			continue
+		}
 		seen[v.ID] = true
 		if v.Status != "supported" {
 			if prev, ok := issues[v.ID]; ok {
@@ -243,6 +261,25 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 		}
 	}
 	return issues, report.Coverage, report.Keywords, nil
+}
+
+// review asks the fact-checker for a verdict on each claim. extra holds the
+// optional requirements and keywords blocks.
+func review(ctx context.Context, p llm.Provider, profile, offer, extra string, claims []flatClaim) (VerificationReport, error) {
+	var list strings.Builder
+	for _, c := range claims {
+		fmt.Fprintf(&list, "id: %s\ntext: %s\ncited: %s\n\n", c.ID, c.Text, strings.Join(c.Sources, " / "))
+	}
+	raw, err := p.GenerateJSON(ctx, llm.Request{
+		System: verifyPrompt,
+		User: tag("profile", profile) + tag("job_offer", offer) + extra + tag("claims", list.String()) +
+			fmt.Sprintf("Fact-check all %d claims above against the profile and return one verdict per id.", len(claims)),
+		Schema: llm.SchemaFor[VerificationReport](),
+	})
+	if err != nil {
+		return VerificationReport{}, fmt.Errorf("verifying documents: %w", err)
+	}
+	return decode[VerificationReport](raw, "verification report")
 }
 
 // requirementsTag lists the offer's requirements for the fact-checker to assess.
