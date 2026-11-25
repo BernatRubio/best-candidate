@@ -174,6 +174,10 @@ func Build(dir string, res *tailor.Result, now time.Time) (BuildResult, error) {
 		res.Warnings = append(res.Warnings, "to keep the CV on one page: "+note)
 	}
 
+	if len(out.Trimmed) > 0 {
+		res.RefreshATS() // the cuts may have removed keywords
+	}
+
 	if err := compileOne(dir, "letter.typ", "cover-letter.pdf"); err != nil {
 		return out, err
 	}

@@ -675,3 +675,48 @@ func TestSkippedClaimsAreReviewedAgain(t *testing.T) {
 		t.Fatal("requirements are assessed once, not again")
 	}
 }
+
+// A keyword that only the Skills block filled in from the profile contains is
+// present in the CV, so the ATS result must be computed after the fill.
+func TestATSCountsSkillsFilledFromProfile(t *testing.T) {
+	a := analysis
+	a.Keywords = []KeyTerm{{Term: "Docker", Importance: ImportanceRequired}}
+	verify := func(llm.Request) (json.RawMessage, error) {
+		return json.Marshal(VerificationReport{Keywords: []KeywordSupport{{Term: "Docker", Supported: true, Evidence: "Tools: Git, Docker"}}})
+	}
+	fake := llm.NewFake(llm.Reply(a), llm.Reply(minimalDocs()), verify)
+	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{MaxRepairs: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(res.ATS.Present, ",") != "Docker" || len(res.ATS.Missing) != 0 {
+		t.Fatalf("ats = %+v", res.ATS)
+	}
+}
+
+// Content cut after the run (to keep the CV on one page) is reflected once the
+// ATS result is refreshed.
+func TestRefreshATSAfterCut(t *testing.T) {
+	a := analysis
+	a.Keywords = []KeyTerm{{Term: "Docker", Importance: ImportanceRequired}}
+	verify := func(llm.Request) (json.RawMessage, error) {
+		return json.Marshal(VerificationReport{Keywords: []KeywordSupport{{Term: "Docker", Supported: true, Evidence: "Tools: Git, Docker"}}})
+	}
+	fake := llm.NewFake(llm.Reply(a), llm.Reply(minimalDocs()), verify)
+	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{MaxRepairs: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Docs.CV.Skills = nil
+	res.RefreshATS()
+	if len(res.ATS.Present) != 0 || strings.Join(res.ATS.Missing, ",") != "Docker" {
+		t.Fatalf("ats = %+v", res.ATS)
+	}
+}
+
+func TestSkillsTextUnderTranslatedHeading(t *testing.T) {
+	es := "# Ada\n\n## Habilidades\n\n- Herramientas: Git, Docker\n\n## Idiomas\n\n- Inglés: B2\n"
+	if got := skillsText(es); !strings.Contains(got, " docker ") {
+		t.Fatalf("skills text = %q", got)
+	}
+}

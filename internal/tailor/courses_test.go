@@ -265,3 +265,12 @@ func TestExampleProfileCourseListsAreParsed(t *testing.T) {
 		}
 	}
 }
+
+func TestCourseCatalogUnderTranslatedHeading(t *testing.T) {
+	for _, h := range []string{"Formación", "Formació", "Educación"} {
+		p := "# Ada\n\n## " + h + "\n\n### Grado en Informática, UPF (2020 - 2025)\n- Sistemas: Operating Systems, Databases, Networks\n"
+		if len(courseCatalog(p)) == 0 {
+			t.Errorf("no courses found under ## %s", h)
+		}
+	}
+}

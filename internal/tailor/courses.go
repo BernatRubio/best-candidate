@@ -58,7 +58,13 @@ func educationSection(profile string) string {
 			if in {
 				break
 			}
-			in = strings.Contains(strings.ToLower(trimmed), "education")
+			title := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")))
+			in = false
+			for _, h := range educationHeadings {
+				if strings.HasPrefix(title, h) {
+					in = true
+				}
+			}
 			continue
 		}
 		if in {

@@ -46,6 +46,25 @@ type Result struct {
 	Dropped  []Dropped
 	Warnings []string
 	ATS      ATS
+
+	ats atsInput
+}
+
+// atsInput is what the ATS assessment needs besides the CV.
+type atsInput struct {
+	g             *grounder
+	analysis      JobAnalysis
+	support       []KeywordSupport
+	profileSkills string
+}
+
+// RefreshATS recomputes ATS from the current CV, for callers that change the
+// documents after Run (such as cutting content to fit one page).
+func (r *Result) RefreshATS() {
+	if r.ats.g == nil {
+		return
+	}
+	r.ATS, _ = keywordStatus(r.ats.g, &r.Docs, r.ats.analysis, r.ats.support, r.ats.profileSkills)
 }
 
 func (o Options) logf(format string, args ...any) {
@@ -86,7 +105,7 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	opt.logf("offer: %s at %s (writing in %q)", analysis.Role, analysis.Company, lang)
 
 	g := newGrounder(profile)
-	profileSkills := " " + normalize(strings.Join(profileSection(profile, "skills"), "\n")) + " "
+	profileSkills := skillsText(profile)
 	catalog := courseCatalog(profile)
 	opt.logf("tailoring the documents")
 	docs, err := tailorDocs(ctx, p, profile, offer, analysis, lang, nil, "", "")
@@ -129,7 +148,6 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 		sortEducation(docs, analysis)
 	}
 
-	res.ATS, _ = keywordStatus(g, docs, analysis, support, profileSkills)
 	res.Warnings = append(res.Warnings, groundIdentity(g, docs)...)
 	res.Warnings = append(res.Warnings, groundRankings(g, docs)...)
 	res.Warnings = append(res.Warnings, groundProjectLinks(g, docs)...)
@@ -141,6 +159,9 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	docs.Coverage = verifierCoverage
 	groundCoverage(g, docs)
 	res.Docs = *docs
+	// Computed last, so that every change to the CV above is counted.
+	res.ats = atsInput{g: g, analysis: analysis, support: support, profileSkills: profileSkills}
+	res.RefreshATS()
 	return res, nil
 }
 

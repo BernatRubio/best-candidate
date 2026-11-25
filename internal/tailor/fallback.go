@@ -11,6 +11,20 @@ import (
 // exact profile line as evidence. This keeps the CV complete; the relevance
 // ordering a good model would add is lost, and the report says so.
 
+// Section headings the profile may use, in English, Spanish and Catalan,
+// matched as prefixes of the lower-cased heading.
+var (
+	skillsHeadings    = []string{"skills", "habilidades", "habilitats", "competencias", "competències"}
+	languagesHeadings = []string{"languages", "idiomas", "idiomes"}
+	educationHeadings = []string{"education", "formación", "formació", "educación", "educació", "estudios", "estudis"}
+)
+
+// skillsText is the profile's Skills section, normalized and padded with
+// spaces so that whole tokens can be searched.
+func skillsText(profile string) string {
+	return " " + normalize(strings.Join(profileSection(profile, skillsHeadings...), "\n")) + " "
+}
+
 // profileSection returns the trimmed lines under the first "## <name>" heading
 // whose title starts with one of names (case-insensitive).
 func profileSection(profile string, names ...string) []string {
@@ -61,7 +75,7 @@ var levelText = strings.NewReplacer(" (", ", ", "(", ", ", ")", "")
 // profile's Skills section.
 func profileSkills(profile string) []Claim {
 	var out []Claim
-	for _, b := range labelledBullets(profileSection(profile, "skills", "habilidades", "habilitats", "competencias", "competències")) {
+	for _, b := range labelledBullets(profileSection(profile, skillsHeadings...)) {
 		out = append(out, Claim{Text: b[2], Sources: []string{b[2]}})
 	}
 	return out
@@ -71,7 +85,7 @@ func profileSkills(profile string) []Claim {
 // bullet under the profile's Languages section.
 func profileLanguages(profile string) []Claim {
 	var out []Claim
-	for _, b := range labelledBullets(profileSection(profile, "languages", "idiomas", "idiomes")) {
+	for _, b := range labelledBullets(profileSection(profile, languagesHeadings...)) {
 		if len(strings.Fields(b[0])) > 3 {
 			continue // a remark such as "Studied both degrees: ..." is not a language
 		}
