@@ -136,6 +136,24 @@ func trimCV(cv *tailor.CV) (string, bool) {
 	return "", false
 }
 
+// Fit cuts content from cv, least important first (see trimCV), until pages
+// reports a single page or nothing more can be cut. pages renders the current
+// cv and counts its pages. Fit returns the last count and a note per cut.
+func Fit(cv *tailor.CV, pages func() (int, error)) (int, []string, error) {
+	var cuts []string
+	for {
+		n, err := pages()
+		if err != nil || n <= 1 {
+			return n, cuts, err
+		}
+		note, ok := trimCV(cv)
+		if !ok {
+			return n, cuts, nil
+		}
+		cuts = append(cuts, note)
+	}
+}
+
 // BuildResult describes what Build produced.
 type BuildResult struct {
 	CVPages     int
@@ -150,30 +168,26 @@ type BuildResult struct {
 // not cut, because its paragraphs cannot be dropped independently.
 func Build(dir string, res *tailor.Result, now time.Time) (BuildResult, error) {
 	var out BuildResult
-	for {
+	pages := func() (int, error) {
 		if err := Write(dir, res, now); err != nil {
-			return out, err
+			return 0, err
 		}
 		if err := compileOne(dir, "cv.typ", "cv.pdf"); err != nil {
-			return out, err
+			return 0, err
 		}
-		pages, err := PDFPages(filepath.Join(dir, "cv.pdf"))
-		if err != nil {
-			return out, err
-		}
-		out.CVPages = pages
-		if pages <= 1 {
-			break
-		}
-		note, ok := trimCV(&res.Docs.CV)
-		if !ok {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("the CV is %d pages and nothing more can be cut automatically; shorten cv.json by hand and run render", pages))
-			break
-		}
-		out.Trimmed = append(out.Trimmed, note)
-		res.Warnings = append(res.Warnings, "to keep the CV on one page: "+note)
+		return PDFPages(filepath.Join(dir, "cv.pdf"))
 	}
-
+	n, cuts, err := Fit(&res.Docs.CV, pages)
+	if err != nil {
+		return out, err
+	}
+	out.CVPages, out.Trimmed = n, cuts
+	for _, c := range cuts {
+		res.Warnings = append(res.Warnings, "to keep the CV on one page: "+c)
+	}
+	if n > 1 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("the CV is %d pages and nothing more can be cut automatically; shorten cv.json by hand and run render", n))
+	}
 	if len(out.Trimmed) > 0 {
 		res.RefreshATS() // the cuts may have removed keywords
 	}

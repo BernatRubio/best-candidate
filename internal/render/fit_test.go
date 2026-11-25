@@ -201,3 +201,48 @@ func TestTrimCVKeepsSkillsUntilBulletsAreMinimal(t *testing.T) {
 		}
 	}
 }
+
+// pagesByBullets is a fake renderer: one page per 6 experience bullets.
+func pagesByBullets(cv *tailor.CV, calls *int) func() (int, error) {
+	return func() (int, error) {
+		*calls++
+		n := 0
+		for _, e := range cv.Experience {
+			n += len(e.Bullets)
+		}
+		return (n + 5) / 6, nil
+	}
+}
+
+func TestFitCutsUntilOnePage(t *testing.T) {
+	cv := &longResult(2, 5).Docs.CV // 10 bullets (2 pages) and one extra section
+	calls := 0
+	n, cuts, err := Fit(cv, pagesByBullets(cv, &calls))
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if len(cuts) != 5 || calls != 6 { // the extra section, then four bullets
+		t.Fatalf("cuts=%v calls=%d", cuts, calls)
+	}
+	for _, e := range cv.Experience {
+		if len(e.Bullets) < 2 {
+			t.Fatalf("cut below two bullets before needed: %+v", cv.Experience)
+		}
+	}
+}
+
+func TestFitStopsWhenNothingCanBeCut(t *testing.T) {
+	cv := &longResult(20, 1).Docs.CV // 20 one-bullet jobs: never fits
+	calls := 0
+	n, _, err := Fit(cv, pagesByBullets(cv, &calls))
+	if err != nil || n <= 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+}
+
+func TestFitPassesRenderErrorsOn(t *testing.T) {
+	cv := &longResult(1, 1).Docs.CV
+	if _, _, err := Fit(cv, func() (int, error) { return 0, fmt.Errorf("typst failed") }); err == nil {
+		t.Fatal("expected the render error")
+	}
+}
