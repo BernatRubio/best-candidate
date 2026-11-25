@@ -3,3 +3,5 @@ profile.md
 *.pdf
 .env
 bin/
+.agents/
+.claude/
