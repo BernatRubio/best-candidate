@@ -14,20 +14,19 @@ var (
 	blankRuns   = regexp.MustCompile(`\n{3,}`)
 )
 
-// Load reads the profile file and returns its content. HTML comments are
-// removed first: they are notes for the user (TODOs, tips) and must not reach
-// the model or be accepted as evidence for a claim. Everything else is kept
-// verbatim; the profile is not parsed.
-func Load(path string) (string, error) {
+// Load reads and parses the profile file. HTML comments are removed first:
+// they are notes for the user (TODOs, tips) and must not reach the model or be
+// accepted as evidence for a claim. Everything else is kept verbatim.
+func Load(path string) (*Profile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("reading profile: %w", err)
+		return nil, fmt.Errorf("reading profile: %w", err)
 	}
-	text := Clean(string(data))
-	if text == "" {
-		return "", fmt.Errorf("profile %s is empty (HTML comments are ignored)", path)
+	p := Parse(string(data))
+	if p.Text() == "" {
+		return nil, fmt.Errorf("profile %s is empty (HTML comments are ignored)", path)
 	}
-	return text, nil
+	return p, nil
 }
 
 // Clean strips HTML comments and tidies the blank lines they leave behind.

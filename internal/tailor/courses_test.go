@@ -49,15 +49,8 @@ func eduDocs(cs, av []Claim) *Documents {
 	return &d
 }
 
-func TestSplitTopLevel(t *testing.T) {
-	got := splitTopLevel("Parallel Programming (OpenMP, CUDA), Databases, Networks")
-	if len(got) != 3 || got[0] != "Parallel Programming (OpenMP, CUDA)" || got[2] != "Networks" {
-		t.Fatalf("got %q", got)
-	}
-}
-
 func TestCourseCatalog(t *testing.T) {
-	cat := courseCatalog(eduProfile)
+	cat := profile.Parse(eduProfile).Courses()
 	index := map[string]int{}
 	for i, c := range cat {
 		index[c] = i
@@ -76,13 +69,13 @@ func TestCourseCatalog(t *testing.T) {
 	if index["advanced computer graphics"] > index["computer graphics"] {
 		t.Error("longer names must come first so they are masked before their substrings")
 	}
-	if len(courseCatalog("# Nobody\n\n## Skills\n\n- Go: a, b, c\n")) != 0 {
+	if len(profile.Parse("# Nobody\n\n## Skills\n\n- Go: a, b, c\n").Courses()) != 0 {
 		t.Error("no Education section must give an empty catalog")
 	}
 }
 
 func TestMentionsDoNotReportSubstrings(t *testing.T) {
-	cat := courseCatalog(eduProfile)
+	cat := profile.Parse(eduProfile).Courses()
 	got := courseMentions("Relevant coursework: Advanced Computer Graphics, Image Processing.", cat)
 	if strings.Join(got, "|") != "advanced computer graphics|image processing" {
 		t.Fatalf("got %v", got)
@@ -90,7 +83,7 @@ func TestMentionsDoNotReportSubstrings(t *testing.T) {
 }
 
 func TestSharedCourseAcrossDegreesIsFlagged(t *testing.T) {
-	cat := courseCatalog(eduProfile)
+	cat := profile.Parse(eduProfile).Courses()
 	docs := eduDocs(
 		claims("Relevant coursework: Object-Oriented Programming, Computer Graphics, Operating Systems."),
 		claims("Relevant coursework: Image Processing, Computer Graphics, Video Processing.", "Top grade in Operating Systems."),
@@ -111,7 +104,7 @@ func TestSharedCourseAcrossDegreesIsFlagged(t *testing.T) {
 }
 
 func TestDistinctCoursesAreNotFlagged(t *testing.T) {
-	cat := courseCatalog(eduProfile)
+	cat := profile.Parse(eduProfile).Courses()
 	// "Computer Graphics" is a substring of "Advanced Computer Graphics" but they are different courses.
 	docs := eduDocs(
 		claims("Relevant coursework: Advanced Computer Graphics, Operating Systems."),
@@ -135,7 +128,7 @@ func TestDuplicateDetectedWithoutCatalog(t *testing.T) {
 }
 
 func TestDedupeCourseworkSafetyNet(t *testing.T) {
-	cat := courseCatalog(eduProfile)
+	cat := profile.Parse(eduProfile).Courses()
 	docs := eduDocs(
 		claims("Relevant coursework: Object-Oriented Programming, Computer Graphics, Operating Systems."),
 		claims("Relevant coursework: Image Processing, Computer Graphics, Video Processing.", "Top grade in Operating Systems.", "Taught entirely in English."),
@@ -163,7 +156,7 @@ func TestDedupeCourseworkSafetyNet(t *testing.T) {
 }
 
 func TestDedupeDropsLineThatBecomesEmpty(t *testing.T) {
-	cat := courseCatalog(eduProfile)
+	cat := profile.Parse(eduProfile).Courses()
 	docs := eduDocs(
 		claims("Relevant coursework: Computer Graphics, Operating Systems."),
 		claims("Relevant coursework: Computer Graphics, Operating Systems."),
@@ -190,7 +183,7 @@ func TestSharedCourseTriggersRepair(t *testing.T) {
 		llm.Reply(bad), allSupported(*bad),
 		llm.Reply(fixed), allSupported(*fixed),
 	)
-	res, err := Run(context.Background(), fake, eduProfile, testOffer, Options{MaxRepairs: 2})
+	res, err := Run(context.Background(), fake, profile.Parse(eduProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +215,7 @@ func TestPersistentSharedCourseIsDeduplicated(t *testing.T) {
 		llm.Reply(bad), allSupported(*bad),
 		llm.Reply(bad), allSupported(*bad),
 	)
-	res, err := Run(context.Background(), fake, eduProfile, testOffer, Options{MaxRepairs: 1})
+	res, err := Run(context.Background(), fake, profile.Parse(eduProfile), testOffer, Options{MaxRepairs: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +242,7 @@ func TestPersistentSharedCourseIsDeduplicated(t *testing.T) {
 // The profile template documents the course-list format; keep its example
 // parseable so the documentation cannot drift from the code.
 func TestExampleProfileCourseListsAreParsed(t *testing.T) {
-	cat := courseCatalog(profile.Clean(bestcandidate.ExampleProfile))
+	cat := profile.Parse(bestcandidate.ExampleProfile).Courses()
 	have := map[string]bool{}
 	for _, c := range cat {
 		have[c] = true
@@ -262,15 +255,6 @@ func TestExampleProfileCourseListsAreParsed(t *testing.T) {
 	for _, grade := range []string{"databases 9 4", "statistics 9 1"} {
 		if have[grade] {
 			t.Errorf("a course written with a grade must not be a catalog entry: %q", grade)
-		}
-	}
-}
-
-func TestCourseCatalogUnderTranslatedHeading(t *testing.T) {
-	for _, h := range []string{"Formación", "Formació", "Educación"} {
-		p := "# Ada\n\n## " + h + "\n\n### Grado en Informática, UPF (2020 - 2025)\n- Sistemas: Operating Systems, Databases, Networks\n"
-		if len(courseCatalog(p)) == 0 {
-			t.Errorf("no courses found under ## %s", h)
 		}
 	}
 }

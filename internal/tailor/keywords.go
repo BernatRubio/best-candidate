@@ -3,6 +3,8 @@ package tailor
 import (
 	"fmt"
 	"strings"
+
+	"github.com/BernatRubio/best-candidate/internal/profile"
 )
 
 // ATS is how well the CV matches the offer's keywords. Applicant tracking
@@ -133,16 +135,16 @@ type keywordGap struct {
 //
 // A keyword that is in the CV only as a skill is also a gap when the profile
 // shows it used in work (its evidence is outside the Skills section): the CV
-// then has a bullet it can name the keyword in. profileSkills is the normalized
-// Skills section of the profile, padded with spaces; a keyword whose only
-// evidence is there cannot be placed in a bullet truthfully, so it is left alone.
-func keywordStatus(g *grounder, docs *Documents, a JobAnalysis, support []KeywordSupport, profileSkills string) (ATS, map[string]keywordGap) {
+// then has a bullet it can name the keyword in. A keyword whose only evidence
+// is the profile's Skills section cannot be placed in a bullet truthfully, so
+// it is left alone.
+func keywordStatus(prof *profile.Profile, docs *Documents, a JobAnalysis, support []KeywordSupport) (ATS, map[string]keywordGap) {
 	var out ATS
 	out.Bullets, out.Unchanged = countBullets(&docs.CV)
 	gaps := map[string]keywordGap{}
 	supported := map[string]string{}
 	for _, s := range support {
-		if s.Supported && g.has(s.Evidence) {
+		if s.Supported && prof.Has(s.Evidence) {
 			supported[normalize(s.Term)] = s.Evidence
 		}
 	}
@@ -156,7 +158,7 @@ func keywordStatus(g *grounder, docs *Documents, a JobAnalysis, support []Keywor
 			// no verdict at all: say nothing
 		case appearsIn(hay, k):
 			out.Present = append(out.Present, k.Term)
-			onlySkill := strings.Contains(profileSkills, " "+normalize(ev)+" ")
+			onlySkill := prof.InSkills(ev)
 			if !appearsIn(bullets, k) && !onlySkill && out.Bullets > 0 {
 				out.NotInBullets = append(out.NotInBullets, k.Term)
 				gaps[k.Term] = keywordGap{Evidence: ev, InCV: true}

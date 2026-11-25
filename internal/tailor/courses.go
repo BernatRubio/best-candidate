@@ -2,9 +2,10 @@ package tailor
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/BernatRubio/best-candidate/internal/profile"
 )
 
 // A course may appear under only one degree. The profile lists shared courses
@@ -12,112 +13,11 @@ import (
 // below detects courses named in more than one education entry and, as a last
 // resort, removes the repeats.
 
-var (
-	parenthetical = regexp.MustCompile(`\([^)]*\)`)
-	gradeLike     = regexp.MustCompile(`\d\.\d`)
-)
-
-// splitTopLevel splits on commas that are not inside parentheses, so
-// "Parallel Programming (OpenMP, CUDA), Databases" gives two items.
-func splitTopLevel(s string) []string {
-	var out []string
-	depth, start := 0, 0
-	for i, r := range s {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			if depth > 0 {
-				depth--
-			}
-		case ',':
-			if depth == 0 {
-				out = append(out, strings.TrimSpace(s[start:i]))
-				start = i + 1
-			}
-		}
-	}
-	return append(out, strings.TrimSpace(s[start:]))
-}
-
-// courseKey reduces a course name to comparable tokens: parentheticals, a
-// leading "and" and punctuation are dropped.
-func courseKey(s string) string {
-	s = parenthetical.ReplaceAllString(s, " ")
-	k := normalize(s)
-	return strings.TrimSpace(strings.TrimPrefix(k, "and "))
-}
-
-// educationSection returns the profile text under the "Education" heading.
-func educationSection(profile string) string {
-	var out []string
-	in := false
-	for _, line := range strings.Split(profile, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") {
-			if in {
-				break
-			}
-			title := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")))
-			in = false
-			for _, h := range educationHeadings {
-				if strings.HasPrefix(title, h) {
-					in = true
-				}
-			}
-			continue
-		}
-		if in {
-			out = append(out, line)
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
-// courseCatalog collects course names from the profile's Education section:
-// the items of "Area: course, course, course" lines. It returns normalised
-// names, longest first (so that "Advanced Computer Graphics" is matched before
-// "Computer Graphics"). An empty catalog disables the profile-based matching.
-func courseCatalog(profile string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, line := range strings.Split(educationSection(profile), "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "- ") {
-			continue
-		}
-		rest := strings.TrimPrefix(line, "- ")
-		i := strings.Index(rest, ": ")
-		if i < 0 {
-			continue
-		}
-		items := splitTopLevel(rest[i+2:])
-		if len(items) < 3 {
-			continue
-		}
-		for _, it := range items {
-			k := courseKey(it)
-			if len(k) < 4 || gradeLike.MatchString(it) || seen[k] {
-				continue
-			}
-			seen[k] = true
-			out = append(out, k)
-		}
-	}
-	sort.Slice(out, func(a, b int) bool {
-		if len(out[a]) != len(out[b]) {
-			return len(out[a]) > len(out[b])
-		}
-		return out[a] < out[b]
-	})
-	return out
-}
-
 // courseMentions lists the catalog courses named in text. Matched spans are
 // masked, longest names first, so "Computer Graphics" is not reported for a
 // text that only says "Advanced Computer Graphics".
 func courseMentions(text string, catalog []string) []string {
-	t := " " + normalize(parenthetical.ReplaceAllString(text, " ")) + " "
+	t := " " + normalize(profile.StripParentheticals(text)) + " "
 	var found []string
 	for _, c := range catalog {
 		needle := " " + c + " "
@@ -149,7 +49,7 @@ func entryCourses(e Education, catalog []string) map[string][]int {
 		}
 		if lead, list, ok := courseList(d.Text); ok && isCourseLead(lead) {
 			for _, it := range list {
-				if k := courseKey(it); k != "" {
+				if k := profile.CourseKey(it); k != "" {
 					add(k, j)
 				}
 			}
@@ -164,7 +64,7 @@ func courseList(text string) (lead string, items []string, ok bool) {
 	if i < 0 {
 		return "", nil, false
 	}
-	items = splitTopLevel(strings.TrimRight(strings.TrimSpace(text[i+1:]), ". "))
+	items = profile.SplitList(strings.TrimRight(strings.TrimSpace(text[i+1:]), ". "))
 	if len(items) < 2 {
 		return "", nil, false
 	}
@@ -270,7 +170,7 @@ func dedupeCoursework(docs *Documents, catalog []string) []string {
 		}
 		var kept []string
 		for _, it := range items {
-			if !set[courseKey(it)] && len(courseMentions(it, keysOf(set))) == 0 {
+			if !set[profile.CourseKey(it)] && len(courseMentions(it, keysOf(set))) == 0 {
 				kept = append(kept, strings.TrimSpace(it))
 			}
 		}

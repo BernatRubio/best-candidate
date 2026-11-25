@@ -36,10 +36,11 @@ line
 
 - Go
 `)
-	got, err := Load(path)
+	p, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := p.Text()
 	if strings.Contains(got, "TODO") || strings.Contains(got, "note to self") || strings.Contains(got, "multi") {
 		t.Fatalf("comments leaked:\n%s", got)
 	}

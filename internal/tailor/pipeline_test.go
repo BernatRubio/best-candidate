@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/BernatRubio/best-candidate/internal/llm"
+	"github.com/BernatRubio/best-candidate/internal/profile"
 )
 
 const testProfile = `# Ada Example
@@ -78,7 +79,7 @@ func TestRunCleanPath(t *testing.T) {
 	}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), verify)
 
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestRunDropsFabricatedClaim(t *testing.T) {
 		llm.Reply(docs), allSupported(docs), // repair returns the same lie
 	)
 
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 1})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +177,7 @@ func TestRunRepairsExaggeration(t *testing.T) {
 		llm.Reply(bad), flag,
 		llm.Reply(fixed), allSupported(fixed),
 	)
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,26 +193,12 @@ func TestRunRepairsExaggeration(t *testing.T) {
 func TestLangOverride(t *testing.T) {
 	docs := baseDocs()
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{Lang: "es"})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{Lang: "es"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Lang != "es" || !strings.Contains(fake.Calls[1].User, "<language>\nes\n</language>") {
 		t.Fatalf("lang = %q", res.Lang)
-	}
-}
-
-func TestNormalizeQuoteMatching(t *testing.T) {
-	g := newGrounder("- **Built** REST APIs in Go,\n  for the billing team\n- C++ and C#")
-	for _, q := range []string{"built rest apis in go for the billing team", "Built REST APIs in Go", "C++", "C#"} {
-		if !g.has(q) {
-			t.Errorf("expected match for %q", q)
-		}
-	}
-	for _, q := range []string{"Led the billing team", "REST AP", "", "go for billing"} {
-		if g.has(q) {
-			t.Errorf("unexpected match for %q", q)
-		}
 	}
 }
 
@@ -304,7 +291,7 @@ func TestCrossReferenceTriggersRepair(t *testing.T) {
 		llm.Reply(bad), allSupported(bad),
 		llm.Reply(fixed), allSupported(fixed),
 	)
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,14 +307,14 @@ func TestCrossReferenceTriggersRepair(t *testing.T) {
 }
 
 func TestRankingMustBeInProfile(t *testing.T) {
-	profile := testProfile + "\n- Top 25%\n"
+	text := testProfile + "\n- Top 25%\n"
 	docs := baseDocs()
 	docs.CV.Education = []Education{
 		{Degree: "A", Institution: "Northfield", Ranking: "Top 25%", Sources: []string{"Top 25%"}},
 		{Degree: "B", Institution: "Northfield", Ranking: "Top 3%", Sources: []string{"Top 25%"}},
 	}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
-	res, err := Run(context.Background(), fake, profile, testOffer, Options{})
+	res, err := Run(context.Background(), fake, profile.Parse(text), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +374,7 @@ func minimalDocs() Documents {
 func TestEmptySkillsAndLanguagesAreFilledFromProfile(t *testing.T) {
 	docs := minimalDocs()
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
-	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	res, err := Run(context.Background(), fake, profile.Parse(fillProfile), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +397,7 @@ func TestModelSkillsAreKept(t *testing.T) {
 	docs.CV.Skills = []Claim{{Text: "Programming: Go", Sources: []string{"Programming: Go, SQL"}}}
 	docs.CV.Languages = []Claim{{Text: "English (B2, Cambridge)", Sources: []string{"English: B2 (Cambridge)"}}}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
-	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	res, err := Run(context.Background(), fake, profile.Parse(fillProfile), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +418,7 @@ func TestProjectLinkMustBeInProfile(t *testing.T) {
 		{Name: "Other", Link: "https://made-up.example/x", Sources: []string{"https://github.com/ada/orion"}},
 	}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
-	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	res, err := Run(context.Background(), fake, profile.Parse(fillProfile), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,7 +444,7 @@ func TestVerifierCoverageIsUsed(t *testing.T) {
 		}})
 	}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), verify)
-	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{})
+	res, err := Run(context.Background(), fake, profile.Parse(fillProfile), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +547,7 @@ func TestCourseworkRemarkTriggersRepair(t *testing.T) {
 		},
 	}}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(bad), allSupported(bad), llm.Reply(fixed), allSupported(fixed))
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,7 +618,7 @@ func TestRunOrdersDegreesByRelevance(t *testing.T) {
 		// The reviewer sees the claims in the sorted order.
 		return allSupported(Documents{CV: CV{Education: []Education{docs.CV.Education[1], docs.CV.Education[0]}}})(llm.Request{})
 	}, llm.Reply(VerificationReport{}))
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,7 +648,7 @@ func TestSkippedClaimsAreReviewedAgain(t *testing.T) {
 		return json.Marshal(rep)
 	}
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), first, rest)
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 0})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +672,7 @@ func TestATSCountsSkillsFilledFromProfile(t *testing.T) {
 		return json.Marshal(VerificationReport{Keywords: []KeywordSupport{{Term: "Docker", Supported: true, Evidence: "Tools: Git, Docker"}}})
 	}
 	fake := llm.NewFake(llm.Reply(a), llm.Reply(minimalDocs()), verify)
-	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{MaxRepairs: 0})
+	res, err := Run(context.Background(), fake, profile.Parse(fillProfile), testOffer, Options{MaxRepairs: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -703,7 +690,7 @@ func TestRefreshATSAfterCut(t *testing.T) {
 		return json.Marshal(VerificationReport{Keywords: []KeywordSupport{{Term: "Docker", Supported: true, Evidence: "Tools: Git, Docker"}}})
 	}
 	fake := llm.NewFake(llm.Reply(a), llm.Reply(minimalDocs()), verify)
-	res, err := Run(context.Background(), fake, fillProfile, testOffer, Options{MaxRepairs: 0})
+	res, err := Run(context.Background(), fake, profile.Parse(fillProfile), testOffer, Options{MaxRepairs: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -711,12 +698,5 @@ func TestRefreshATSAfterCut(t *testing.T) {
 	res.RefreshATS()
 	if len(res.ATS.Present) != 0 || strings.Join(res.ATS.Missing, ",") != "Docker" {
 		t.Fatalf("ats = %+v", res.ATS)
-	}
-}
-
-func TestSkillsTextUnderTranslatedHeading(t *testing.T) {
-	es := "# Ada\n\n## Habilidades\n\n- Herramientas: Git, Docker\n\n## Idiomas\n\n- Inglés: B2\n"
-	if got := skillsText(es); !strings.Contains(got, " docker ") {
-		t.Fatalf("skills text = %q", got)
 	}
 }

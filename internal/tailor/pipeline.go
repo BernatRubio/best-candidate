@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/BernatRubio/best-candidate/internal/llm"
+	"github.com/BernatRubio/best-candidate/internal/profile"
 )
 
 //go:embed prompts/analyze.md
@@ -52,19 +53,18 @@ type Result struct {
 
 // atsInput is what the ATS assessment needs besides the CV.
 type atsInput struct {
-	g             *grounder
-	analysis      JobAnalysis
-	support       []KeywordSupport
-	profileSkills string
+	prof     *profile.Profile
+	analysis JobAnalysis
+	support  []KeywordSupport
 }
 
 // RefreshATS recomputes ATS from the current CV, for callers that change the
 // documents after Run (such as cutting content to fit one page).
 func (r *Result) RefreshATS() {
-	if r.ats.g == nil {
+	if r.ats.prof == nil {
 		return
 	}
-	r.ATS, _ = keywordStatus(r.ats.g, &r.Docs, r.ats.analysis, r.ats.support, r.ats.profileSkills)
+	r.ATS, _ = keywordStatus(r.ats.prof, &r.Docs, r.ats.analysis, r.ats.support)
 }
 
 func (o Options) logf(format string, args ...any) {
@@ -88,7 +88,7 @@ func decode[T any](raw json.RawMessage, what string) (T, error) {
 // Run produces CV and letter documents for the offer, with every claim checked
 // against the profile. Claims that cannot be grounded after the repair rounds
 // are dropped and listed in Result.Dropped.
-func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options) (*Result, error) {
+func Run(ctx context.Context, p llm.Provider, prof *profile.Profile, offer string, opt Options) (*Result, error) {
 	opt.logf("analysing the job offer")
 	analysis, err := analyze(ctx, p, offer)
 	if err != nil {
@@ -104,11 +104,9 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	}
 	opt.logf("offer: %s at %s (writing in %q)", analysis.Role, analysis.Company, lang)
 
-	g := newGrounder(profile)
-	profileSkills := skillsText(profile)
-	catalog := courseCatalog(profile)
+	catalog := prof.Courses()
 	opt.logf("tailoring the documents")
-	docs, err := tailorDocs(ctx, p, profile, offer, analysis, lang, nil, "", "")
+	docs, err := tailorDocs(ctx, p, prof.Text(), offer, analysis, lang, nil, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -119,14 +117,14 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 	var support []KeywordSupport
 	for round := 0; ; round++ {
 		opt.logf("verifying every claim against the profile (round %d)", round+1)
-		issues, coverage, kw, err := check(ctx, p, g, profile, offer, analysis, docs)
+		issues, coverage, kw, err := check(ctx, p, prof, offer, analysis, docs)
 		if err != nil {
 			return nil, err
 		}
 		verifierCoverage, support = coverage, kw
 		// Keywords the profile supports but the CV leaves out are not false
 		// claims, so they never cause a drop; they only trigger a repair round.
-		_, gaps := keywordStatus(g, docs, analysis, support, profileSkills)
+		_, gaps := keywordStatus(prof, docs, analysis, support)
 		// A course named under two degrees is not a false claim, so it is
 		// repaired (or, as a last resort, deduplicated) rather than dropped.
 		dups := duplicateCourseIssues(docs, catalog)
@@ -141,26 +139,26 @@ func Run(ctx context.Context, p llm.Provider, profile, offer string, opt Options
 		}
 		opt.logf("sending the flagged claims back for correction")
 		prev, _ := json.MarshalIndent(docs, "", "  ")
-		docs, err = tailorDocs(ctx, p, profile, offer, analysis, lang, prev, problemList(docs, mergeIssues(issues, dups)), missingKeywordsList(analysis, gaps))
+		docs, err = tailorDocs(ctx, p, prof.Text(), offer, analysis, lang, prev, problemList(docs, mergeIssues(issues, dups)), missingKeywordsList(analysis, gaps))
 		if err != nil {
 			return nil, err
 		}
 		sortEducation(docs, analysis)
 	}
 
-	res.Warnings = append(res.Warnings, groundIdentity(g, docs)...)
-	res.Warnings = append(res.Warnings, groundRankings(g, docs)...)
-	res.Warnings = append(res.Warnings, groundProjectLinks(g, docs)...)
+	res.Warnings = append(res.Warnings, groundIdentity(prof, docs)...)
+	res.Warnings = append(res.Warnings, groundRankings(prof, docs)...)
+	res.Warnings = append(res.Warnings, groundProjectLinks(prof, docs)...)
 	cleanEducationTitles(docs)
 	cleanRecipient(docs, analysis)
-	res.Warnings = append(res.Warnings, fillSkillsLanguages(profile, docs)...)
+	res.Warnings = append(res.Warnings, fillSkillsLanguages(prof, docs)...)
 	// Requirements are assessed by the fact-checker only: it has no stake in the
 	// candidate looking good, and the writer has enough to do.
 	docs.Coverage = verifierCoverage
-	groundCoverage(g, docs)
+	groundCoverage(prof, docs)
 	res.Docs = *docs
 	// Computed last, so that every change to the CV above is counted.
-	res.ats = atsInput{g: g, analysis: analysis, support: support, profileSkills: profileSkills}
+	res.ats = atsInput{prof: prof, analysis: analysis, support: support}
 	res.RefreshATS()
 	return res, nil
 }
@@ -216,7 +214,7 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 
 // check returns id -> reason for every claim that is not fully supported. It
 // combines mechanical quote checks with an independent model review.
-func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer string, analysis JobAnalysis, docs *Documents) (map[string]string, []Coverage, []KeywordSupport, error) {
+func check(ctx context.Context, p llm.Provider, prof *profile.Profile, offer string, analysis JobAnalysis, docs *Documents) (map[string]string, []Coverage, []KeywordSupport, error) {
 	claims := docs.claims()
 	issues := map[string]string{}
 
@@ -225,7 +223,7 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 			issues[c.ID] = "no source quote given"
 			continue
 		}
-		if miss := g.missing(c.Sources); len(miss) > 0 {
+		if miss := prof.Missing(c.Sources); len(miss) > 0 {
 			issues[c.ID] = fmt.Sprintf("quoted source not found in the profile: %q", miss[0])
 			continue
 		}
@@ -236,7 +234,7 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 		}
 	}
 
-	report, err := review(ctx, p, profile, offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
+	report, err := review(ctx, p, prof.Text(), offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -253,7 +251,7 @@ func check(ctx context.Context, p llm.Provider, g *grounder, profile, offer stri
 		}
 	}
 	if len(skipped) > 0 {
-		more, err := review(ctx, p, profile, offer, "", skipped)
+		more, err := review(ctx, p, prof.Text(), offer, "", skipped)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -343,14 +341,14 @@ func drop(docs *Documents, issues map[string]string) []Dropped {
 
 // groundIdentity makes sure the name and contact lines really come from the
 // profile; unverifiable contact lines are removed.
-func groundIdentity(g *grounder, docs *Documents) []string {
+func groundIdentity(prof *profile.Profile, docs *Documents) []string {
 	var warnings []string
-	if !g.has(docs.CV.Name) {
+	if !prof.Has(docs.CV.Name) {
 		warnings = append(warnings, fmt.Sprintf("name %q was not found in the profile", docs.CV.Name))
 	}
 	var contact []string
 	for _, line := range docs.CV.Contact {
-		if g.has(line) {
+		if prof.Has(line) {
 			contact = append(contact, line)
 		} else {
 			warnings = append(warnings, fmt.Sprintf("contact line %q is not in the profile and was removed", line))
@@ -362,9 +360,9 @@ func groundIdentity(g *grounder, docs *Documents) []string {
 
 // groundCoverage downgrades "covered" entries whose evidence quote is not in
 // the profile.
-func groundCoverage(g *grounder, docs *Documents) {
+func groundCoverage(prof *profile.Profile, docs *Documents) {
 	for i, c := range docs.Coverage {
-		if c.Covered && !g.has(c.Evidence) {
+		if c.Covered && !prof.Has(c.Evidence) {
 			docs.Coverage[i].Covered = false
 			docs.Coverage[i].Evidence = ""
 		}
@@ -385,10 +383,10 @@ func refersToOtherEntry(text string) bool { return crossReference.MatchString(te
 
 // groundRankings clears a class ranking that is not in the profile (a wrong
 // ranking is worse than none) and reports it.
-func groundRankings(g *grounder, docs *Documents) []string {
+func groundRankings(prof *profile.Profile, docs *Documents) []string {
 	var warnings []string
 	for i, e := range docs.CV.Education {
-		if e.Ranking != "" && !g.has(e.Ranking) {
+		if e.Ranking != "" && !prof.Has(e.Ranking) {
 			warnings = append(warnings, fmt.Sprintf("class ranking %q for %q is not in the profile and was removed", e.Ranking, e.Degree))
 			docs.CV.Education[i].Ranking = ""
 		}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/BernatRubio/best-candidate/internal/llm"
+	"github.com/BernatRubio/best-candidate/internal/profile"
 )
 
 func kwDocs(texts ...string) *Documents {
@@ -18,7 +19,7 @@ func kwDocs(texts ...string) *Documents {
 }
 
 func TestKeywordStatus(t *testing.T) {
-	g := newGrounder("Go, PostgreSQL, CI pipeline, Docker")
+	prof := profile.Parse("## Skills\n- Tools: Go, PostgreSQL, Docker\n\n## Experience\n- Ran the CI pipeline")
 	a := JobAnalysis{Keywords: []KeyTerm{
 		{Term: "Go"},
 		{Term: "Continuous Integration", Variants: []string{"CI"}},
@@ -32,7 +33,7 @@ func TestKeywordStatus(t *testing.T) {
 		{Term: "Kafka", Supported: true, Evidence: "Kafka brokers"}, // quote not in profile
 	}
 	// "Google" must not match "Go"; the acronym variant matches the full term.
-	ats, gaps := keywordStatus(g, kwDocs("Tools: Google Cloud, CI"), a, support, " go postgresql docker ")
+	ats, gaps := keywordStatus(prof, kwDocs("Tools: Google Cloud, CI"), a, support)
 	if strings.Join(ats.Present, ",") != "Continuous Integration" {
 		t.Errorf("present = %v", ats.Present)
 	}
@@ -43,7 +44,7 @@ func TestKeywordStatus(t *testing.T) {
 		t.Errorf("not in profile = %v", ats.NotInProfile)
 	}
 	// Without any verdict nothing is reported.
-	ats, gaps = keywordStatus(g, kwDocs("x"), a, nil, "")
+	ats, gaps = keywordStatus(prof, kwDocs("x"), a, nil)
 	if len(gaps) != 0 || len(ats.Missing)+len(ats.NotInProfile)+len(ats.Present) != 0 {
 		t.Errorf("no verdict should give no report: %+v", ats)
 	}
@@ -70,7 +71,7 @@ func TestMissingKeywordTriggersRepairWithoutDrops(t *testing.T) {
 		}
 	}
 	fake := llm.NewFake(llm.Reply(a), llm.Reply(docs), verify(docs), llm.Reply(repaired), verify(repaired))
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 2})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestKeywordGapAfterLastRepairIsOnlyReported(t *testing.T) {
 		return json.Marshal(r)
 	}
 	fake := llm.NewFake(llm.Reply(a), llm.Reply(docs), verify)
-	res, err := Run(context.Background(), fake, testProfile, testOffer, Options{MaxRepairs: 0})
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,8 +140,7 @@ func TestATSPromptsAndSchema(t *testing.T) {
 // a job, is a gap: the bullet that shows it should name it. A keyword whose
 // only evidence is the profile's Skills list is left alone.
 func TestKeywordOnlyInSkillsIsAGapWhenProfileShowsUse(t *testing.T) {
-	g := newGrounder(testProfile)
-	skills := " " + normalize("Go, PostgreSQL, Docker") + " "
+	prof := profile.Parse(testProfile)
 	docs := baseDocs()
 	docs.CV.Experience[0].Bullets[0].Text = "Built billing services in Go"
 	docs.CV.Sections[0].Items = []Claim{{Text: "REST APIs, PostgreSQL"}}
@@ -149,7 +149,7 @@ func TestKeywordOnlyInSkillsIsAGapWhenProfileShowsUse(t *testing.T) {
 		{Term: "REST APIs", Supported: true, Evidence: "Built REST APIs in Go for the billing team"},
 		{Term: "PostgreSQL", Supported: true, Evidence: "Go, PostgreSQL, Docker"},
 	}
-	ats, gaps := keywordStatus(g, &docs, a, support, skills)
+	ats, gaps := keywordStatus(prof, &docs, a, support)
 	if strings.Join(ats.NotInBullets, ",") != "REST APIs" || !gaps["REST APIs"].InCV {
 		t.Fatalf("not in bullets = %v gaps = %v", ats.NotInBullets, gaps)
 	}
