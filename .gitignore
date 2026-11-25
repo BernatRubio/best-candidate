@@ -5,3 +5,4 @@ profile.md
 bin/
 .agents/
 .claude/
+skills-lock.json
