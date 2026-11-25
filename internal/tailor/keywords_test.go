@@ -165,7 +165,7 @@ func TestCountBulletsFindsUnchangedLines(t *testing.T) {
 	docs := baseDocs()
 	docs.CV.Experience[0].Bullets = append(docs.CV.Experience[0].Bullets,
 		Claim{Text: "Wrote REST APIs in Go", Sources: []string{"Built REST APIs in Go for the billing team"}})
-	total, unchanged := countBullets(&docs.CV)
+	total, unchanged := countBullets(&docs)
 	if total != 2 || unchanged != 1 {
 		t.Fatalf("total=%d unchanged=%d", total, unchanged)
 	}

@@ -41,49 +41,19 @@ func keywordsTag(a JobAnalysis) string {
 
 // cvText is every sentence of the CV that an ATS reads, normalized and padded
 // so that whole tokens can be searched.
-func cvText(cv *CV) string {
-	parts := []string{cv.Summary.Text}
-	for _, c := range cv.Skills {
-		parts = append(parts, c.Text)
-	}
-	for _, p := range cv.Projects {
-		parts = append(parts, p.Name)
-		for _, b := range p.Details {
-			parts = append(parts, b.Text)
-		}
-	}
-	for _, e := range cv.Experience {
-		parts = append(parts, e.Title)
-		for _, b := range e.Bullets {
-			parts = append(parts, b.Text)
-		}
-	}
-	for _, e := range cv.Education {
-		parts = append(parts, e.Degree)
-		for _, b := range e.Details {
-			parts = append(parts, b.Text)
-		}
-	}
-	for _, s := range cv.Sections {
-		for _, b := range s.Items {
-			parts = append(parts, b.Text)
-		}
-	}
-	return " " + normalize(strings.Join(parts, " ")) + " "
+func cvText(d *Documents) string {
+	return plainText(d.cvClaims(func(ClaimRef) bool { return true }))
 }
 
 // bulletText is the experience and project bullets only, normalized like cvText.
-func bulletText(cv *CV) string {
-	var parts []string
-	for _, p := range cv.Projects {
-		for _, b := range p.Details {
-			parts = append(parts, b.Text)
-		}
-	}
-	for _, e := range cv.Experience {
-		for _, b := range e.Bullets {
-			parts = append(parts, b.Text)
-		}
+func bulletText(d *Documents) string {
+	return plainText(d.cvClaims(ClaimRef.isBullet))
+}
+
+func plainText(cs []flatClaim) string {
+	parts := make([]string, len(cs))
+	for i, c := range cs {
+		parts[i] = c.Plain
 	}
 	return " " + normalize(strings.Join(parts, " ")) + " "
 }
@@ -91,24 +61,14 @@ func bulletText(cv *CV) string {
 // countBullets returns how many experience and project bullets the CV has and
 // how many of them are word for word one of the profile lines they cite: a
 // sign that nothing was tailored to the offer.
-func countBullets(cv *CV) (total, unchanged int) {
-	count := func(c Claim) {
+func countBullets(d *Documents) (total, unchanged int) {
+	for _, c := range d.cvClaims(ClaimRef.isBullet) {
 		total++
 		for _, src := range c.Sources {
 			if normalize(src) == normalize(c.Text) {
 				unchanged++
-				return
+				break
 			}
-		}
-	}
-	for _, p := range cv.Projects {
-		for _, b := range p.Details {
-			count(b)
-		}
-	}
-	for _, e := range cv.Experience {
-		for _, b := range e.Bullets {
-			count(b)
 		}
 	}
 	return total, unchanged
@@ -140,7 +100,7 @@ type keywordGap struct {
 // it is left alone.
 func keywordStatus(prof *profile.Profile, docs *Documents, a JobAnalysis, support []KeywordSupport) (ATS, map[string]keywordGap) {
 	var out ATS
-	out.Bullets, out.Unchanged = countBullets(&docs.CV)
+	out.Bullets, out.Unchanged = countBullets(docs)
 	gaps := map[string]keywordGap{}
 	supported := map[string]string{}
 	for _, s := range support {
@@ -148,7 +108,7 @@ func keywordStatus(prof *profile.Profile, docs *Documents, a JobAnalysis, suppor
 			supported[normalize(s.Term)] = s.Evidence
 		}
 	}
-	hay, bullets := cvText(&docs.CV), bulletText(&docs.CV)
+	hay, bullets := cvText(docs), bulletText(docs)
 	for _, k := range a.Keywords {
 		ev, ok := supported[normalize(k.Term)]
 		switch {

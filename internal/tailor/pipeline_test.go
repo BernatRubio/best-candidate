@@ -266,8 +266,8 @@ func TestRefersToOtherEntry(t *testing.T) {
 			t.Errorf("refersToOtherEntry(%q) = %v, want %v", text, got, want)
 		}
 	}
-	if !isEducationDetail("cv.education[1].details[0]") || isEducationDetail("cv.experience[0].bullets[0]") || isEducationDetail("cv.education[1]") {
-		t.Error("isEducationDetail misclassifies ids")
+	if (ClaimRef{kindEducationDetail, 1, 0}).String() != "cv.education[1].details[0]" || (ClaimRef{kindEducation, 1, 0}).String() != "cv.education[1]" {
+		t.Error("ClaimRef renders the wrong id")
 	}
 }
 

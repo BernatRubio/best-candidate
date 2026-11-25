@@ -115,7 +115,7 @@ func duplicateCourseIssues(docs *Documents, catalog []string) map[string]string 
 	for c, entries := range repeats {
 		for _, i := range entries {
 			for _, j := range per[i][c] {
-				id := fmt.Sprintf("cv.education[%d].details[%d]", i, j)
+				id := ClaimRef{kindEducationDetail, i, j}.String()
 				byID[id] = append(byID[id], fmt.Sprintf("%q is also named under %q", c, docs.CV.Education[first[c]].Degree))
 			}
 		}

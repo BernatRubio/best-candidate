@@ -227,9 +227,9 @@ func check(ctx context.Context, p llm.Provider, prof *profile.Profile, offer str
 			issues[c.ID] = fmt.Sprintf("quoted source not found in the profile: %q", miss[0])
 			continue
 		}
-		if isEducationDetail(c.ID) && refersToOtherEntry(c.Text) {
+		if c.Ref.Kind == kindEducationDetail && refersToOtherEntry(c.Text) {
 			issues[c.ID] = "refers to another entry or to the other degree; every degree entry must stand on its own, so state the fact fully inside this entry or delete the line"
-		} else if isEducationDetail(c.ID) && courseworkLeadHasRemark(c.Text) {
+		} else if c.Ref.Kind == kindEducationDetail && courseworkLeadHasRemark(c.Text) {
 			issues[c.ID] = "the coursework line must hold only the list of courses; move the remark in parentheses (for example the language of instruction) to its own line"
 		}
 	}
@@ -328,10 +328,10 @@ func problemList(docs *Documents, issues map[string]string) string {
 
 func drop(docs *Documents, issues map[string]string) []Dropped {
 	var out []Dropped
-	bad := map[string]bool{}
+	bad := map[ClaimRef]bool{}
 	for _, c := range docs.claims() {
 		if reason, ok := issues[c.ID]; ok {
-			bad[c.ID] = true
+			bad[c.Ref] = true
 			out = append(out, Dropped{ID: c.ID, Text: c.Text, Reason: reason})
 		}
 	}
@@ -370,11 +370,8 @@ func groundCoverage(prof *profile.Profile, docs *Documents) {
 }
 
 var (
-	educationDetailID = regexp.MustCompile(`^cv\.education\[\d+\]\.details\[\d+\]$`)
-	crossReference    = regexp.MustCompile(`(?i)\b(same as above|as above|as (?:in|for) the (?:previous|other|first|second)|the (?:previous|other|first|second) degree|both degrees|both of (?:my|the) degrees|likewise|similarly|also)\b`)
+	crossReference = regexp.MustCompile(`(?i)\b(same as above|as above|as (?:in|for) the (?:previous|other|first|second)|the (?:previous|other|first|second) degree|both degrees|both of (?:my|the) degrees|likewise|similarly|also)\b`)
 )
-
-func isEducationDetail(id string) bool { return educationDetailID.MatchString(id) }
 
 // refersToOtherEntry reports whether an education line points at another entry
 // ("also taught in English", "same as above"), which makes no sense when the
