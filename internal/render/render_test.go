@@ -13,8 +13,9 @@ import (
 
 func sample() *tailor.Result {
 	return &tailor.Result{
-		Lang:     "ca",
-		Analysis: tailor.JobAnalysis{Company: "Acme", Role: "Desenvolupador Go"},
+		Lang:    "ca",
+		Company: "Acme",
+		Role:    "Desenvolupador Go",
 		Docs: tailor.Documents{
 			CV: tailor.CV{
 				Name:    "Ada Exemple",
@@ -41,12 +42,8 @@ func sample() *tailor.Result {
 				Paragraphs: []tailor.Claim{{Text: "Us escric per al lloc de desenvolupador Go."}},
 				Closing:    "Cordialment,", Signature: "Ada Exemple",
 			},
-			Coverage: []tailor.Coverage{
-				{Requirement: "Go", Covered: true, Evidence: "APIs REST en Go"},
-				{Requirement: "Kubernetes"},
-			},
 		},
-		Dropped: []tailor.Dropped{{ID: "cv.summary", Text: "x", Reason: "unsupported: y"}},
+		Warnings: []string{"to keep the CV on one page: dropped a bullet"},
 	}
 }
 
@@ -99,15 +96,6 @@ func readFile(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
-}
-
-func TestReport(t *testing.T) {
-	r := Report(sample())
-	for _, want := range []string{"Desenvolupador Go at Acme", "**Go**", "- Kubernetes", "`cv.summary`"} {
-		if !strings.Contains(r, want) {
-			t.Errorf("report missing %q:\n%s", want, r)
-		}
-	}
 }
 
 func TestSlugAndDate(t *testing.T) {
@@ -301,11 +289,9 @@ func TestFolderName(t *testing.T) {
 	}
 }
 
-func TestReportHasATSSection(t *testing.T) {
-	res := sample()
-	res.ATS = tailor.ATS{Present: []string{"Go"}, Missing: []string{"PostgreSQL"}, NotInProfile: []string{"Kafka"}, NotInBullets: []string{"Docker"}, Bullets: 4, Unchanged: 3}
-	r := Report(res)
-	for _, want := range []string{"## ATS keyword match", "1 of 2 offer keywords", "- PostgreSQL", "- Kafka", "- Docker", "3 of 4 experience and project bullets"} {
+func TestReport(t *testing.T) {
+	r := Report(sample())
+	for _, want := range []string{"Desenvolupador Go at Acme", "`ca`", "## Warnings", "dropped a bullet"} {
 		if !strings.Contains(r, want) {
 			t.Errorf("report lacks %q:\n%s", want, r)
 		}

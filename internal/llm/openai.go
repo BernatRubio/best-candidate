@@ -13,34 +13,17 @@ import (
 	"time"
 )
 
-// JSON output modes for OpenAI-compatible servers.
-const (
-	// JSONModeSchema sends the schema as response_format json_schema (strict).
-	JSONModeSchema = "schema"
-	// JSONModeObject asks only for a JSON object and puts the schema in the
-	// prompt, for servers that do not support json_schema.
-	JSONModeObject = "object"
-	// JSONModeTool forces a call to a "submit" tool whose parameters are the
-	// schema, for servers that support tools but not response_format (such as
-	// OpenRouter's free endpoints).
-	JSONModeTool = "tool"
-)
-
-// submitTool is the tool the model must call in JSONModeTool.
+// submitTool is the tool the model must call: its parameters are the schema,
+// which works on servers that ignore response_format (such as OpenRouter's
+// free endpoints).
 const submitTool = "submit"
 
 // OpenAICompatConfig configures a client for the /chat/completions API shared
-// by OpenAI, Ollama, OpenRouter, Groq, LM Studio, vLLM and others.
+// by OpenAI, OpenRouter, Ollama and others.
 type OpenAICompatConfig struct {
-	Name        string
-	BaseURL     string
-	APIKey      string
-	KeyRequired string // when set and APIKey is empty, fail naming this env var
-	Model       string
-	JSONMode    string
-	// MaxTokens and ReasoningEffort are sent only when set.
-	MaxTokens       int
-	ReasoningEffort string
+	BaseURL string
+	APIKey  string
+	Model   string
 }
 
 // OpenAICompat talks to any OpenAI-compatible chat completions endpoint.
@@ -49,26 +32,16 @@ type OpenAICompat struct {
 	http *http.Client
 }
 
-// NewOpenAICompat validates the configuration and builds the client.
-func NewOpenAICompat(cfg OpenAICompatConfig) (*OpenAICompat, error) {
-	if cfg.KeyRequired != "" && cfg.APIKey == "" {
-		return nil, fmt.Errorf("%s is not set", cfg.KeyRequired)
-	}
-	switch cfg.JSONMode {
-	case "":
-		cfg.JSONMode = JSONModeSchema
-	case JSONModeSchema, JSONModeObject, JSONModeTool:
-	default:
-		return nil, fmt.Errorf("BC_JSON_MODE must be %q, %q or %q, got %q", JSONModeSchema, JSONModeObject, JSONModeTool, cfg.JSONMode)
-	}
+// NewOpenAICompat builds the client.
+func NewOpenAICompat(cfg OpenAICompatConfig) *OpenAICompat {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &OpenAICompat{
 		cfg:  cfg,
 		http: &http.Client{Timeout: 10 * time.Minute},
-	}, nil
+	}
 }
 
-func (o *OpenAICompat) Name() string { return o.cfg.Name + "/" + o.cfg.Model }
+func (o *OpenAICompat) Name() string { return o.cfg.Model }
 
 // compatRetry retries rate limits and overload: the waits are 2s, 4s, 8s and
 // 16s, or the server's Retry-After (up to 30s).
@@ -102,41 +75,21 @@ type chatResponse struct {
 // GenerateJSON requests a JSON document matching req.Schema. Rate limits and
 // transient server errors fail with a retryableError (see WithRetry).
 func (o *OpenAICompat) GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error) {
-	payload := map[string]any{"model": o.cfg.Model}
-	system := req.System
-	switch o.cfg.JSONMode {
-	case JSONModeObject:
-		system += "\n\nRespond with a single JSON object that validates against this JSON schema, and nothing else (no prose, no code fences):\n" + string(req.Schema)
-		payload["response_format"] = map[string]any{"type": "json_object"}
-	case JSONModeTool:
-		payload["tools"] = []map[string]any{{
+	payload := map[string]any{
+		"model": o.cfg.Model,
+		"messages": []map[string]string{
+			{"role": "system", "content": req.System},
+			{"role": "user", "content": req.User},
+		},
+		"tools": []map[string]any{{
 			"type": "function",
 			"function": map[string]any{
 				"name":        submitTool,
 				"description": "Submit the final answer. Its arguments are the whole JSON document.",
 				"parameters":  req.Schema,
 			},
-		}}
-		payload["tool_choice"] = map[string]any{"type": "function", "function": map[string]string{"name": submitTool}}
-	default:
-		payload["response_format"] = map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   "output",
-				"strict": true,
-				"schema": req.Schema,
-			},
-		}
-	}
-	payload["messages"] = []map[string]string{
-		{"role": "system", "content": system},
-		{"role": "user", "content": req.User},
-	}
-	if o.cfg.MaxTokens > 0 {
-		payload["max_tokens"] = o.cfg.MaxTokens
-	}
-	if o.cfg.ReasoningEffort != "" {
-		payload["reasoning"] = map[string]string{"effort": o.cfg.ReasoningEffort}
+		}},
+		"tool_choice": map[string]any{"type": "function", "function": map[string]string{"name": submitTool}},
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -169,16 +122,16 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		return nil, &retryableError{err: fmt.Errorf("%s request: %w", o.cfg.Name, err)}
+		return nil, &retryableError{err: fmt.Errorf("request: %w", err)}
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
-		return nil, &retryableError{err: fmt.Errorf("reading %s response: %w", o.cfg.Name, err)}
+		return nil, &retryableError{err: fmt.Errorf("reading response: %w", err)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		apiErr := fmt.Errorf("%s API error %d: %s", o.cfg.Name, resp.StatusCode, apiMessage(data))
+		apiErr := fmt.Errorf("API error %d: %s", resp.StatusCode, apiMessage(data))
 		if resp.StatusCode == http.StatusTooManyRequests && strings.Contains(string(data), "per-day") {
 			// A daily quota (such as OpenRouter's free-models-per-day) does not
 			// clear within any retry wait.
@@ -193,10 +146,10 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 			}
 			return nil, re
 		case http.StatusBadRequest:
-			return nil, fmt.Errorf("%w (if the server does not support json_schema output, set BC_JSON_MODE=tool or BC_JSON_MODE=object)", apiErr)
+			return nil, fmt.Errorf("%w (check that the model supports tool calls)", apiErr)
 		case http.StatusUnauthorized, http.StatusForbidden:
 			if o.cfg.APIKey == "" {
-				return nil, fmt.Errorf("%w (no API key was sent: export BC_API_KEY, or OPENAI_API_KEY, in this shell)", apiErr)
+				return nil, fmt.Errorf("%w (no API key was sent: set BC_API_KEY in the shell or in .env)", apiErr)
 			}
 			return nil, fmt.Errorf("%w (the API key was rejected: check it and that it belongs to this provider)", apiErr)
 		}
@@ -205,13 +158,13 @@ func (o *OpenAICompat) once(ctx context.Context, body []byte) (json.RawMessage, 
 
 	var cr chatResponse
 	if err := json.Unmarshal(data, &cr); err != nil {
-		return nil, fmt.Errorf("decoding %s response: %w", o.cfg.Name, err)
+		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 	if cr.Error != nil {
-		return nil, fmt.Errorf("%s error: %s", o.cfg.Name, cr.Error.Message)
+		return nil, fmt.Errorf("API error: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
-		return nil, fmt.Errorf("%s returned no choices", o.cfg.Name)
+		return nil, errors.New("the API returned no choices")
 	}
 	c := cr.Choices[0]
 	if c.Message.Refusal != "" {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"google.golang.org/genai"
 )
 
 func chatReply(content, finish string) string {
@@ -26,13 +23,8 @@ func chatReply(content, finish string) string {
 	return string(b)
 }
 
-func newCompat(t *testing.T, url, mode string) *OpenAICompat {
-	t.Helper()
-	o, err := NewOpenAICompat(OpenAICompatConfig{Name: "test", BaseURL: url, APIKey: "sk-test", Model: "m", JSONMode: mode})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return o
+func newCompat(url string) *OpenAICompat {
+	return NewOpenAICompat(OpenAICompatConfig{BaseURL: url, APIKey: "sk-test", Model: "m"})
 }
 
 // fast applies pol with millisecond waits.
@@ -42,66 +34,6 @@ func fast(p Provider, pol RetryPolicy) Provider {
 }
 
 var req = Request{System: "be honest", User: "hello", Schema: json.RawMessage(`{"type":"object"}`)}
-
-func TestCompatSchemaMode(t *testing.T) {
-	var got map[string]any
-	var auth, path string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth, path = r.Header.Get("Authorization"), r.URL.Path
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &got)
-		_, _ = w.Write([]byte(chatReply(`{"ok":true}`, "stop")))
-	}))
-	defer srv.Close()
-
-	out, err := newCompat(t, srv.URL+"/v1/", JSONModeSchema).GenerateJSON(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(out) != `{"ok":true}` {
-		t.Fatalf("out = %s", out)
-	}
-	if auth != "Bearer sk-test" || path != "/v1/chat/completions" {
-		t.Fatalf("auth=%q path=%q", auth, path)
-	}
-	rf := got["response_format"].(map[string]any)
-	if rf["type"] != "json_schema" {
-		t.Fatalf("response_format = %v", rf)
-	}
-	js := rf["json_schema"].(map[string]any)
-	if js["strict"] != true || js["schema"].(map[string]any)["type"] != "object" {
-		t.Fatalf("json_schema = %v", js)
-	}
-	msgs := got["messages"].([]any)
-	if msgs[0].(map[string]any)["content"] != "be honest" || msgs[1].(map[string]any)["role"] != "user" {
-		t.Fatalf("messages = %v", msgs)
-	}
-}
-
-func TestCompatObjectModeStripsFences(t *testing.T) {
-	var got map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &got)
-		_, _ = w.Write([]byte(chatReply("```json\n{\"ok\": true}\n```", "stop")))
-	}))
-	defer srv.Close()
-
-	out, err := newCompat(t, srv.URL, JSONModeObject).GenerateJSON(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(out) != `{"ok": true}` {
-		t.Fatalf("out = %s", out)
-	}
-	if got["response_format"].(map[string]any)["type"] != "json_object" {
-		t.Fatalf("response_format = %v", got["response_format"])
-	}
-	system := got["messages"].([]any)[0].(map[string]any)["content"].(string)
-	if !strings.Contains(system, `{"type":"object"}`) {
-		t.Fatalf("schema missing from system prompt: %s", system)
-	}
-}
 
 func TestCompatRetriesTransientErrors(t *testing.T) {
 	var calls atomic.Int32
@@ -114,7 +46,7 @@ func TestCompatRetriesTransientErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req); err != nil {
+	if _, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 3 {
@@ -130,7 +62,7 @@ func TestCompatGivesUpAfterRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
+	_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "overloaded") {
 		t.Fatalf("err = %v", err)
 	}
@@ -147,9 +79,9 @@ func TestCompatDoesNotRetryClientErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "BC_JSON_MODE=object") {
-		t.Fatalf("err should hint at BC_JSON_MODE: %v", err)
+	_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), "tool calls") {
+		t.Fatalf("err should hint at tool calls: %v", err)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("calls = %d", calls.Load())
@@ -168,7 +100,7 @@ func TestCompatRefusalAndTruncation(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
+			_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
@@ -183,7 +115,7 @@ func TestCompatNoAuthHeaderWithoutKey(t *testing.T) {
 		_, _ = w.Write([]byte(chatReply(`{}`, "stop")))
 	}))
 	defer srv.Close()
-	o, _ := NewOpenAICompat(OpenAICompatConfig{Name: "ollama", BaseURL: srv.URL, Model: "llama"})
+	o := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, Model: "llama"})
 	if _, err := o.GenerateJSON(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
@@ -209,52 +141,17 @@ func TestExtractJSON(t *testing.T) {
 	}
 }
 
-func TestNewValidation(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("BC_API_KEY", "")
-	t.Setenv("GEMINI_API_KEY", "")
-	t.Setenv("GOOGLE_API_KEY", "")
-	t.Setenv("BC_JSON_MODE", "")
-	cases := []struct {
-		name string
-		cfg  Config
-		want string
-	}{
-		{"unknown", Config{Provider: "foo", Model: "m"}, "unknown provider"},
-		{"openai needs model", Config{Provider: "openai"}, "needs a model"},
-		{"openai needs key", Config{Provider: "openai", Model: "m"}, "OPENAI_API_KEY"},
-		{"gemini needs key", Config{Provider: "gemini", Model: "m"}, "GEMINI_API_KEY"},
-		{"compat needs url", Config{Provider: "openai-compatible", Model: "m"}, "base URL"},
-		{"ollama needs model", Config{Provider: "ollama"}, "needs a model"},
-	}
-	for _, tc := range cases {
-		_, err := New(tc.cfg)
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
-		}
-	}
-
-	p, err := New(Config{Provider: "ollama", Model: "llama3"})
-	if err != nil || p.Name() != "ollama/llama3" {
-		t.Fatalf("ollama: %v %v", p, err)
-	}
-	t.Setenv("OPENAI_API_KEY", "sk")
-	if p, err := New(Config{Provider: "openai", Model: "m"}); err != nil || p.Name() != "openai/m" {
-		t.Fatalf("openai: %v %v", p, err)
-	}
-	t.Setenv("BC_JSON_MODE", "weird")
-	if _, err := New(Config{Provider: "ollama", Model: "m"}); err == nil {
-		t.Fatal("expected error for bad BC_JSON_MODE")
+func TestNewNeedsModel(t *testing.T) {
+	if _, err := New(Config{}); err == nil || !strings.Contains(err.Error(), "model") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestFromEnvOverridesFlags(t *testing.T) {
-	t.Setenv("BC_PROVIDER", "ollama")
 	t.Setenv("BC_MODEL", "qwen")
 	t.Setenv("BC_BASE_URL", "")
-	t.Setenv("BC_JSON_MODE", "")
-	p, err := FromEnv(Config{Provider: "anthropic", Model: "ignored"})
-	if err != nil || p.Name() != "ollama/qwen" {
+	p, err := FromEnv(Config{Model: "ignored"})
+	if err != nil || p.Name() != "qwen" {
 		t.Fatalf("%v %v", p, err)
 	}
 }
@@ -315,18 +212,6 @@ func TestRetryHonoursContext(t *testing.T) {
 	}
 }
 
-func TestIsTransientGemini(t *testing.T) {
-	for code, want := range map[int]bool{429: true, 500: true, 503: true, 504: true, 400: false, 401: false, 404: false} {
-		err := fmt.Errorf("wrapped: %w", genai.APIError{Code: code, Status: "X"})
-		if got := isTransientGemini(err); got != want {
-			t.Errorf("code %d: got %v want %v", code, got, want)
-		}
-	}
-	if isTransientGemini(errors.New("plain")) {
-		t.Error("non-API errors are not transient")
-	}
-}
-
 func TestAPIMessageShowsUpstreamDetail(t *testing.T) {
 	body := `{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"model is temporarily rate-limited upstream","provider_name":"SomeHost"}}}`
 	got := apiMessage([]byte(body))
@@ -352,11 +237,11 @@ func TestAuthErrorsExplainTheKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	noKey, _ := NewOpenAICompat(OpenAICompatConfig{Name: "compat", BaseURL: srv.URL, Model: "m"})
+	noKey := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, Model: "m"})
 	if _, err := noKey.GenerateJSON(context.Background(), req); err == nil || !strings.Contains(err.Error(), "BC_API_KEY") {
 		t.Fatalf("missing key must be explained: %v", err)
 	}
-	withKey := newCompat(t, srv.URL, "")
+	withKey := newCompat(srv.URL)
 	if _, err := withKey.GenerateJSON(context.Background(), req); err == nil || !strings.Contains(err.Error(), "rejected") {
 		t.Fatalf("rejected key must be explained: %v", err)
 	}
@@ -377,9 +262,7 @@ func TestCompatToolMode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	o := newCompat(t, srv.URL, JSONModeTool)
-	o.cfg.MaxTokens, o.cfg.ReasoningEffort = 1000, "high"
-	out, err := o.GenerateJSON(context.Background(), req)
+	out, err := newCompat(srv.URL).GenerateJSON(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +270,7 @@ func TestCompatToolMode(t *testing.T) {
 		t.Fatalf("out = %s", out)
 	}
 	if _, ok := got["response_format"]; ok {
-		t.Fatal("tool mode must not send response_format")
+		t.Fatal("response_format must not be sent")
 	}
 	tool := got["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
 	if tool["name"] != "submit" || tool["parameters"].(map[string]any)["type"] != "object" {
@@ -396,8 +279,9 @@ func TestCompatToolMode(t *testing.T) {
 	if got["tool_choice"].(map[string]any)["function"].(map[string]any)["name"] != "submit" {
 		t.Fatalf("tool_choice = %v", got["tool_choice"])
 	}
-	if got["max_tokens"] != float64(1000) || got["reasoning"].(map[string]any)["effort"] != "high" {
-		t.Fatalf("max_tokens=%v reasoning=%v", got["max_tokens"], got["reasoning"])
+	msgs := got["messages"].([]any)
+	if msgs[0].(map[string]any)["content"] != "be honest" || msgs[1].(map[string]any)["role"] != "user" {
+		t.Fatalf("messages = %v", msgs)
 	}
 }
 
@@ -407,7 +291,7 @@ func TestCompatToolModeFallsBackToContent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := newCompat(t, srv.URL, JSONModeTool).GenerateJSON(context.Background(), req)
+	out, err := newCompat(srv.URL).GenerateJSON(context.Background(), req)
 	if err != nil || string(out) != `{"ok":true}` {
 		t.Fatalf("out=%s err=%v", out, err)
 	}
@@ -426,7 +310,7 @@ func TestCompatHonoursRetryAfter(t *testing.T) {
 	defer srv.Close()
 
 	start := time.Now()
-	if _, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req); err != nil {
+	if _, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}
 	if d := time.Since(start); d < time.Second {
@@ -449,7 +333,7 @@ func TestCompatDoesNotRetryDailyQuota(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := fast(newCompat(t, srv.URL, ""), compatRetry).GenerateJSON(context.Background(), req)
+	_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
 	if err == nil || !strings.Contains(err.Error(), "daily request quota") || calls.Load() != 1 {
 		t.Fatalf("calls=%d err=%v", calls.Load(), err)
 	}

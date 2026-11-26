@@ -2,45 +2,6 @@
 // letter documents.
 package tailor
 
-// JobAnalysis is the structured reading of the job offer.
-type JobAnalysis struct {
-	Company    string    `json:"company" jsonschema:"description=Hiring company name; empty string if the offer does not say"`
-	Role       string    `json:"role" jsonschema:"description=Job title being hired for"`
-	Language   string    `json:"language" jsonschema:"description=ISO 639-1 code of the language the offer is written in, e.g. en or es or ca"`
-	MustHave   []string  `json:"must_have" jsonschema:"description=Hard requirements stated in the offer, one short phrase each"`
-	NiceToHave []string  `json:"nice_to_have" jsonschema:"description=Optional or preferred qualifications stated in the offer"`
-	Keywords   []KeyTerm `json:"keywords" jsonschema:"description=Technologies and methods and domain terms the offer uses, most important first"`
-	Tone       string    `json:"tone" jsonschema:"description=Register of the company: for example formal or startup-casual or technical"`
-}
-
-// Keyword importance levels, from where the offer mentions the term.
-const (
-	ImportanceRequired  = "required"
-	ImportancePreferred = "preferred"
-	ImportanceMentioned = "mentioned"
-)
-
-// KeyTerm is one keyword of the offer, as an applicant tracking system would
-// match it: the exact term plus the other forms the offer itself uses.
-type KeyTerm struct {
-	Term       string   `json:"term" jsonschema:"description=The term exactly as the offer spells it"`
-	Variants   []string `json:"variants" jsonschema:"description=Other forms of the same term that the offer itself uses (acronym or full form); empty list if none"`
-	Importance string   `json:"importance" jsonschema:"enum=required,enum=preferred,enum=mentioned,description=required if it appears among the requirements; preferred if it is a nice to have; mentioned otherwise"`
-}
-
-// forms returns the term and its variants.
-func (k KeyTerm) forms() []string {
-	return append([]string{k.Term}, k.Variants...)
-}
-
-// KeywordSupport is the fact-checker's judgement on whether the profile shows
-// one keyword of the offer.
-type KeywordSupport struct {
-	Term      string `json:"term" jsonschema:"description=The keyword exactly as given in the keywords block"`
-	Supported bool   `json:"supported" jsonschema:"description=true only if the profile clearly shows this technology or method or skill"`
-	Evidence  string `json:"evidence" jsonschema:"description=One quote copied verbatim from the profile when supported; empty string otherwise"`
-}
-
 // Claim is a piece of text about the candidate plus the evidence for it.
 type Claim struct {
 	Text    string   `json:"text" jsonschema:"description=The statement as it appears in the document"`
@@ -59,7 +20,6 @@ type Experience struct {
 
 // Education is one study entry in the CV.
 type Education struct {
-	Relevance   int      `json:"relevance" jsonschema:"description=How directly this degree matches the field the job needs from 0 (unrelated) to 10 (exactly that field); the program lists the degrees from the highest score to the lowest"`
 	Degree      string   `json:"degree"`
 	Institution string   `json:"institution"`
 	Period      string   `json:"period" jsonschema:"description=Dates exactly as the profile states them; empty string if none"`
@@ -121,30 +81,18 @@ type Letter struct {
 	Signature  string  `json:"signature" jsonschema:"description=Candidate name"`
 }
 
-// Coverage records how the profile matches one requirement of the offer.
-type Coverage struct {
-	Requirement string `json:"requirement"`
-	Covered     bool   `json:"covered" jsonschema:"description=true only if the profile clearly shows it"`
-	Evidence    string `json:"evidence" jsonschema:"description=Verbatim profile quote when covered; empty string otherwise"`
-}
-
-// Documents is everything the tailoring step produces.
+// Documents is the tailored CV and cover letter.
 type Documents struct {
-	CV       CV         `json:"cv"`
-	Letter   Letter     `json:"letter"`
-	Coverage []Coverage `json:"coverage"`
+	CV     CV     `json:"cv"`
+	Letter Letter `json:"letter"`
 }
 
-// Verdict is the fact-checker's judgement on one claim.
-type Verdict struct {
-	ID     string `json:"id"`
-	Status string `json:"status" jsonschema:"enum=supported,enum=exaggerated,enum=unsupported"`
-	Reason string `json:"reason" jsonschema:"description=One sentence explaining the verdict"`
-}
-
-// VerificationReport is the fact-checker's output.
-type VerificationReport struct {
-	Verdicts []Verdict        `json:"verdicts"`
-	Coverage []Coverage       `json:"coverage" jsonschema:"description=One entry per requirement listed in the requirements block of the input"`
-	Keywords []KeywordSupport `json:"keywords" jsonschema:"description=One entry per term listed in the keywords block of the input"`
+// output is what the model returns: the documents plus what the program needs
+// to name the output folder and pick the language.
+type output struct {
+	Company  string `json:"company" jsonschema:"description=Hiring company name; empty string if the offer does not say"`
+	Role     string `json:"role" jsonschema:"description=Job title being hired for"`
+	Language string `json:"language" jsonschema:"description=ISO 639-1 code of the language the documents are written in, e.g. en or es or ca"`
+	CV       CV     `json:"cv"`
+	Letter   Letter `json:"letter"`
 }

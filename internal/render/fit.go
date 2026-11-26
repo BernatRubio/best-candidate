@@ -188,9 +188,6 @@ func Build(dir string, res *tailor.Result, now time.Time) (BuildResult, error) {
 	if n > 1 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("the CV is %d pages and nothing more can be cut automatically; shorten cv.json by hand and run render", n))
 	}
-	if len(out.Trimmed) > 0 {
-		res.RefreshATS() // the cuts may have removed keywords
-	}
 
 	if err := compileOne(dir, "letter.typ", "cover-letter.pdf"); err != nil {
 		return out, err

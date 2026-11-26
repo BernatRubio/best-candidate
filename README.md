@@ -3,20 +3,19 @@
 Generate a tailored CV and cover letter (PDF) from a job offer, without exaggeration.
 
 You keep one markdown file with everything about yourself. For each job offer, `best-candidate`
-selects and rephrases what is relevant, using only facts from that file. Every statement is
-checked against the file, and anything that cannot be verified is removed. Requirements your
-profile does not show are left out and listed in a report instead of being implied.
+selects and rephrases what is relevant, using only facts from that file. The model is told to back
+every statement with a verbatim quote from your profile. Nothing is verified automatically yet.
 
 ## Install
 
 You need [Go](https://go.dev/dl/), [Typst](https://github.com/typst/typst#installation) and an API
-key for one model provider.
+key for an OpenAI-compatible server (OpenRouter by default).
 
 ```sh
 git clone https://github.com/BernatRubio/best-candidate
 cd best-candidate
 go build -o best-candidate ./cmd/best-candidate
-export ANTHROPIC_API_KEY=...
+export BC_API_KEY=sk-or-...
 ```
 
 Instead of exporting keys in every shell, you can put them in a `.env` file in the folder you run the
@@ -37,16 +36,13 @@ Anything missing from the file can never appear in an output. HTML comments (`<!
 ignored, so use them for notes to yourself.
 
 If you list courses, put them under the degree they belong to as `- Area: course, course, course`
-lines, and write a class ranking such as `Top 10%` on its own line. The tool picks the most relevant
-courses for each job and never names the same course under two degrees: a course shared by two
-degrees (for example recognised credits) appears under the one that fits the job best. Spell a
-shared course identically in both lists so the repeat can be detected. The template shows the format.
+lines, and write a class ranking such as `Top 10%` on its own line. The template shows the format.
 
 Then generate documents for each offer, given as a markdown file or a URL:
 
 ```sh
-./best-candidate generate offer.md
-./best-candidate generate https://example.com/jobs/123
+./best-candidate generate --model nvidia/nemotron-3-ultra-550b-a55b:free offer.md
+./best-candidate generate --model <model> https://example.com/jobs/123
 ```
 
 Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a file instead.
@@ -56,8 +52,8 @@ Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a
 | `--profile` | profile path (default `profile.md`) |
 | `--lang` | `auto` (default) follows the offer's language; or `en`, `es`, `ca`, ... |
 | `--out` | output folder (default `out`) |
-| `--max-repairs` | correction rounds before unverifiable statements are removed (default 2) |
-| `--provider`, `--model`, `--base-url` | model selection, see below |
+| `--model` | model id, required (env `BC_MODEL`) |
+| `--base-url` | OpenAI-compatible API URL (default `https://openrouter.ai/api/v1`, env `BC_BASE_URL`) |
 
 ## Output
 
@@ -66,7 +62,7 @@ Each run writes `out/<company>-<role>-<date>/`:
 | File | Content |
 |---|---|
 | `cv.pdf`, `cover-letter.pdf` | the documents |
-| `report.md` | requirements your profile covers and does not show, anything removed, warnings |
+| `report.md` | the offer, the language and any warnings |
 | `cv.json`, `letter.json` | the content, editable |
 | `cv.typ`, `letter.typ`, `common.typ` | the Typst templates, editable |
 
@@ -75,42 +71,14 @@ enough the least relevant content is removed from the end of each list (every cu
 `report.md`). A cover letter longer than one page is reported but not cut.
 
 After editing the JSON or the templates, rebuild the PDFs with `./best-candidate render out/<folder>`.
-The command exits with status 2 if it had to remove statements it could not verify.
 
-## Models
+## Model
 
-| `--provider` | Credentials | Notes |
-|---|---|---|
-| `anthropic` (default) | `ANTHROPIC_API_KEY` | default model `claude-opus-5-5` |
-| `openai` | `OPENAI_API_KEY` | `--model` required |
-| `gemini` | `GEMINI_API_KEY` | `--model` required |
-| `ollama` | none | local; `--model` required |
-| `openai-compatible` | `BC_API_KEY` | `--base-url` and `--model` required |
+The tool talks to any OpenAI-compatible `/chat/completions` server, OpenRouter by default. The API
+key comes from `BC_API_KEY`. The JSON output is requested as a forced tool call, so the model must
+support tools. Each run makes one model call.
 
-`BC_PROVIDER`, `BC_MODEL` and `BC_BASE_URL` set the same options from the environment. If a server
-rejects strict JSON-schema output, set `BC_JSON_MODE=tool` (the schema is sent as a forced tool call)
-or `BC_JSON_MODE=object` (the schema is put in the prompt). `BC_MAX_TOKENS` and `BC_REASONING_EFFORT`
-(`low`, `medium`, `high`) are sent to OpenAI-compatible servers when set. Small local models follow the
-honesty rules noticeably worse.
-
-For example, NVIDIA Nemotron 3 Ultra on OpenRouter's free tier, which ignores `response_format` but
-supports tools:
-
-```sh
-BC_API_KEY=sk-or-... BC_JSON_MODE=tool BC_MAX_TOKENS=32000 ./best-candidate generate \
-  --provider openai-compatible --base-url https://openrouter.ai/api/v1 \
-  --model nvidia/nemotron-3-ultra-550b-a55b:free offer.md
-```
-
-## How statements are verified
-
-The model must back every statement with verbatim quotes from your profile. The tool checks that
-each quote really exists in the profile, then a second, independent model call fact-checks every
-statement. Flagged statements are sent back for correction, and whatever is still unsupported is
-removed.
-
-The fact-checker is a model and can miss things, and an inflated profile produces inflated
-documents. Always read both documents before sending them.
+The model can still exaggerate: always read both documents before sending them.
 
 ## Development
 

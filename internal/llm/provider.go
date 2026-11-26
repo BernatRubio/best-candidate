@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -26,100 +25,35 @@ type Provider interface {
 	GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error)
 }
 
-// Config selects and configures a provider.
+// Config configures the OpenAI-compatible provider.
 type Config struct {
-	Provider string // anthropic | openai | gemini | ollama | openai-compatible
-	Model    string
-	BaseURL  string // openai-compatible and ollama; optional elsewhere
+	Model   string
+	BaseURL string
 }
 
-// Supported lists the provider names New accepts.
-const Supported = "anthropic, openai, gemini, ollama, openai-compatible"
+// DefaultBaseURL is OpenRouter's API.
+const DefaultBaseURL = "https://openrouter.ai/api/v1"
 
-// New builds a provider. Only Anthropic has a default model: model ids of the
-// other vendors change too often to hard-code, so they must be given.
+// New builds an OpenAI-compatible provider with retries. The API key is read
+// from BC_API_KEY.
 func New(c Config) (Provider, error) {
-	name := strings.ToLower(strings.TrimSpace(c.Provider))
-	if name == "" {
-		name = "anthropic"
+	if c.Model == "" {
+		return nil, fmt.Errorf("a model is needed: pass --model or set BC_MODEL")
 	}
-	if name != "anthropic" && name != "claude" && c.Model == "" {
-		return nil, fmt.Errorf("provider %q needs a model: pass --model or set BC_MODEL", name)
-	}
-	mode := firstNonEmpty(os.Getenv("BC_JSON_MODE"), JSONModeSchema)
-	maxTokens := 0
-	if v := os.Getenv("BC_MAX_TOKENS"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n <= 0 {
-			return nil, fmt.Errorf("BC_MAX_TOKENS must be a positive number, got %q", v)
-		}
-		maxTokens = n
-	}
-	effort := os.Getenv("BC_REASONING_EFFORT")
-
-	switch name {
-	case "anthropic", "claude":
-		return NewAnthropic(c.Model)
-	case "openai":
-		return retried(NewOpenAICompat(OpenAICompatConfig{
-			Name:            "openai",
-			BaseURL:         firstNonEmpty(c.BaseURL, "https://api.openai.com/v1"),
-			APIKey:          firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
-			KeyRequired:     "OPENAI_API_KEY",
-			Model:           c.Model,
-			JSONMode:        mode,
-			MaxTokens:       maxTokens,
-			ReasoningEffort: effort,
-		}))
-	case "ollama":
-		return retried(NewOpenAICompat(OpenAICompatConfig{
-			Name:            "ollama",
-			BaseURL:         firstNonEmpty(c.BaseURL, "http://localhost:11434/v1"),
-			APIKey:          os.Getenv("BC_API_KEY"),
-			Model:           c.Model,
-			JSONMode:        mode,
-			MaxTokens:       maxTokens,
-			ReasoningEffort: effort,
-		}))
-	case "openai-compatible", "compatible", "compat":
-		if c.BaseURL == "" {
-			return nil, fmt.Errorf("provider %q needs a base URL: pass --base-url or set BC_BASE_URL", name)
-		}
-		return retried(NewOpenAICompat(OpenAICompatConfig{
-			Name:            "compat",
-			BaseURL:         c.BaseURL,
-			APIKey:          firstNonEmpty(os.Getenv("BC_API_KEY"), os.Getenv("OPENAI_API_KEY")),
-			Model:           c.Model,
-			JSONMode:        mode,
-			MaxTokens:       maxTokens,
-			ReasoningEffort: effort,
-		}))
-	case "gemini", "google":
-		g, err := NewGemini(c.Model)
-		if err != nil {
-			return nil, err
-		}
-		return WithRetry(g, geminiRetry), nil
-	default:
-		return nil, fmt.Errorf("unknown provider %q (supported: %s)", c.Provider, Supported)
-	}
-}
-
-// retried wraps a new OpenAI-compatible client in its retry policy.
-func retried(o *OpenAICompat, err error) (Provider, error) {
-	if err != nil {
-		return nil, err
-	}
+	o := NewOpenAICompat(OpenAICompatConfig{
+		BaseURL: firstNonEmpty(c.BaseURL, DefaultBaseURL),
+		APIKey:  os.Getenv("BC_API_KEY"),
+		Model:   c.Model,
+	})
 	return WithRetry(o, compatRetry), nil
 }
 
-// FromEnv builds a provider from BC_PROVIDER / BC_MODEL / BC_BASE_URL, using
-// the flag values as the fallback.
+// FromEnv builds a provider from BC_MODEL / BC_BASE_URL, using the flag values
+// as the fallback.
 func FromEnv(flags Config) (Provider, error) {
 	return New(Config{
-		Provider: firstNonEmpty(os.Getenv("BC_PROVIDER"), flags.Provider),
-		Model:    firstNonEmpty(os.Getenv("BC_MODEL"), flags.Model),
-		BaseURL:  firstNonEmpty(os.Getenv("BC_BASE_URL"), flags.BaseURL),
+		Model:   firstNonEmpty(os.Getenv("BC_MODEL"), flags.Model),
+		BaseURL: firstNonEmpty(os.Getenv("BC_BASE_URL"), flags.BaseURL),
 	})
 }
 

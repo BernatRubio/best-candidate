@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -21,9 +20,6 @@ import (
 	"github.com/BernatRubio/best-candidate/internal/render"
 	"github.com/BernatRubio/best-candidate/internal/tailor"
 )
-
-// errDropped signals a finished run in which unverifiable claims were removed.
-var errDropped = errors.New("some statements could not be verified and were removed")
 
 func main() {
 	// API keys may live in a .env file in the folder the command is run from;
@@ -44,10 +40,6 @@ func main() {
 	root.AddCommand(initCmd(), generateCmd(), renderCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		if errors.Is(err, errDropped) {
-			fmt.Fprintln(os.Stderr, "warning:", err)
-			os.Exit(2)
-		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -76,9 +68,8 @@ func initCmd() *cobra.Command {
 
 func generateCmd() *cobra.Command {
 	var (
-		profilePath, lang, outDir    string
-		providerName, model, baseURL string
-		maxRepairs                   int
+		profilePath, lang, outDir string
+		model, baseURL            string
 	)
 	cmd := &cobra.Command{
 		Use:   "generate <offer>",
@@ -98,7 +89,7 @@ func generateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			provider, err := llm.FromEnv(llm.Config{Provider: providerName, Model: model, BaseURL: baseURL})
+			provider, err := llm.FromEnv(llm.Config{Model: model, BaseURL: baseURL})
 			if err != nil {
 				return err
 			}
@@ -106,37 +97,26 @@ func generateCmd() *cobra.Command {
 			logf("using %s", provider.Name())
 
 			res, err := tailor.Run(ctx, provider, prof, offer, tailor.Options{
-				Lang: lang, MaxRepairs: maxRepairs, Logf: logf,
+				Lang: lang, Logf: logf,
 			})
 			if err != nil {
 				return err
 			}
 
 			now := time.Now()
-			dir := filepath.Join(outDir, render.FolderName(res.Analysis.Company, res.Analysis.Role, now))
+			dir := filepath.Join(outDir, render.FolderName(res.Company, res.Role, now))
 			info, err := render.Build(dir, res, now)
 			if err != nil {
 				return fmt.Errorf("documents written to %s but PDF build failed: %w", dir, err)
 			}
 
-			covered := 0
-			for _, c := range res.Docs.Coverage {
-				if c.Covered {
-					covered++
-				}
-			}
 			fmt.Fprintf(out, "\nDone: %s\n", dir)
 			fmt.Fprintln(out, "  cv.pdf, cover-letter.pdf, report.md (plus editable cv.json, letter.json, *.typ)")
 			fmt.Fprintf(out, "  cv.pdf: %d page(s), cover-letter.pdf: %d page(s)\n", info.CVPages, info.LetterPages)
-			fmt.Fprintf(out, "  requirements covered by your profile: %d of %d\n", covered, len(res.Docs.Coverage))
 			for _, w := range res.Warnings {
 				fmt.Fprintf(out, "  warning: %s\n", w)
 			}
-			if len(res.Dropped) > 0 {
-				fmt.Fprintf(out, "  %d statement(s) removed because they could not be verified; see report.md\n", len(res.Dropped))
-				return errDropped
-			}
-			fmt.Fprintln(out, "  Read both documents before sending: verification is automated, not infallible.")
+			fmt.Fprintln(out, "  Read both documents before sending: nothing was verified automatically.")
 			return nil
 		},
 	}
@@ -144,10 +124,8 @@ func generateCmd() *cobra.Command {
 	f.StringVar(&profilePath, "profile", "profile.md", "path to your master profile")
 	f.StringVar(&lang, "lang", "auto", "output language (ISO 639-1, e.g. en, es, ca) or auto to follow the offer")
 	f.StringVar(&outDir, "out", "out", "directory for generated applications")
-	f.StringVar(&providerName, "provider", "anthropic", "model provider: "+llm.Supported+" (env BC_PROVIDER overrides)")
-	f.StringVar(&model, "model", "", "model id (env BC_MODEL overrides; required except for anthropic, which defaults to claude-opus-5-5)")
-	f.StringVar(&baseURL, "base-url", "", "API base URL for ollama and openai-compatible (env BC_BASE_URL overrides)")
-	f.IntVar(&maxRepairs, "max-repairs", 2, "correction rounds before unverifiable statements are dropped")
+	f.StringVar(&model, "model", "", "model id, required (env BC_MODEL overrides)")
+	f.StringVar(&baseURL, "base-url", llm.DefaultBaseURL, "OpenAI-compatible API base URL (env BC_BASE_URL overrides)")
 	return cmd
 }
 

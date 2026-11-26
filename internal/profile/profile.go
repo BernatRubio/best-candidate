@@ -14,7 +14,15 @@ var (
 	blankRuns   = regexp.MustCompile(`\n{3,}`)
 )
 
-// Load reads and parses the profile file. HTML comments are removed first:
+// Profile is the cleaned master profile.
+type Profile struct {
+	text string
+}
+
+// Text is the cleaned profile, as the model sees it.
+func (p *Profile) Text() string { return p.text }
+
+// Load reads the profile file. HTML comments are removed first:
 // they are notes for the user (TODOs, tips) and must not reach the model or be
 // accepted as evidence for a claim. Everything else is kept verbatim.
 func Load(path string) (*Profile, error) {
@@ -22,7 +30,7 @@ func Load(path string) (*Profile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading profile: %w", err)
 	}
-	p := Parse(string(data))
+	p := &Profile{text: Clean(string(data))}
 	if p.Text() == "" {
 		return nil, fmt.Errorf("profile %s is empty (HTML comments are ignored)", path)
 	}
