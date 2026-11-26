@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/BernatRubio/best-candidate/internal/llm"
@@ -115,19 +116,23 @@ func Run(ctx context.Context, p llm.Provider, prof *profile.Profile, offer strin
 	var report VerificationReport
 	for round := 0; ; round++ {
 		opt.logf("verifying every claim against the profile (round %d)", round+1)
-		if report, err = verify(ctx, p, prof.Text(), offer, analysis, docs); err != nil {
+		if report, err = verify(ctx, p, prof.Text(), offer, analysis, docs, opt); err != nil {
 			return nil, err
 		}
 		f := rv.Review(docs, report)
 		if f.clean() {
 			break
 		}
-		opt.logf("%d claim(s) flagged, %d keyword(s) missing", len(f.Issues)+len(f.Courses), len(f.Gaps))
+		opt.logf("%d claim(s) flagged, %d unreviewed, %d keyword(s) missing", len(f.Issues)+len(f.Courses), len(f.Unreviewed), len(f.Gaps))
 		if round >= opt.MaxRepairs {
 			var warnings []string
 			res.Dropped, warnings = rv.GiveUp(docs, f)
 			res.Warnings = append(res.Warnings, warnings...)
 			break
+		}
+		if f.onlyUnreviewed() {
+			// Nothing for the writer to fix: the same draft is verified again.
+			continue
 		}
 		opt.logf("sending the flagged claims back for correction")
 		prev, _ := json.MarshalIndent(docs, "", "  ")
@@ -197,31 +202,102 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 // verify asks the fact-checker for a verdict on every claim, the coverage of
 // the requirements and the support for each keyword. Some models stop part way
 // through a long list, so the claims they skip are asked about once more, on
-// their own.
-func verify(ctx context.Context, p llm.Provider, profile, offer string, analysis JobAnalysis, docs *Documents) (VerificationReport, error) {
+// their own. Verdict ids are matched to the claims leniently (see canonicalID),
+// and whatever still does not match is logged.
+func verify(ctx context.Context, p llm.Provider, profile, offer string, analysis JobAnalysis, docs *Documents, opt Options) (VerificationReport, error) {
 	claims := docs.claims()
 	report, err := review(ctx, p, profile, offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
 	if err != nil {
 		return report, err
 	}
-	seen := map[string]bool{}
-	for _, v := range report.Verdicts {
-		seen[v.ID] = true
-	}
-	var skipped []flatClaim
-	for _, c := range claims {
-		if !seen[c.ID] {
-			skipped = append(skipped, c)
-		}
-	}
+	var unknown []string
+	report.Verdicts, unknown = matchVerdicts(claims, report.Verdicts)
+	skipped := unanswered(claims, report.Verdicts)
 	if len(skipped) > 0 {
 		more, err := review(ctx, p, profile, offer, "", skipped)
 		if err != nil {
 			return report, err
 		}
-		report.Verdicts = append(report.Verdicts, more.Verdicts...)
+		matched, unk := matchVerdicts(skipped, more.Verdicts)
+		report.Verdicts = append(report.Verdicts, matched...)
+		unknown = append(unknown, unk...)
+	}
+	if len(unknown) > 0 {
+		opt.logf("the fact-checker returned verdicts for unknown ids: %s", strings.Join(unknown, ", "))
+	}
+	if missing := unanswered(claims, report.Verdicts); len(missing) > 0 {
+		ids := make([]string, len(missing))
+		for i, c := range missing {
+			ids[i] = c.ID
+		}
+		opt.logf("the fact-checker gave no verdict for: %s", strings.Join(ids, ", "))
 	}
 	return report, nil
+}
+
+// unanswered returns the claims that no verdict names.
+func unanswered(claims []flatClaim, verdicts []Verdict) []flatClaim {
+	seen := map[string]bool{}
+	for _, v := range verdicts {
+		seen[v.ID] = true
+	}
+	var out []flatClaim
+	for _, c := range claims {
+		if !seen[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// matchVerdicts rewrites each verdict's id to the claim id it names, allowing
+// for the small changes models make when copying ids, and returns the ids that
+// name no claim (those verdicts are left out).
+func matchVerdicts(claims []flatClaim, verdicts []Verdict) ([]Verdict, []string) {
+	byID := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, c := range claims {
+		k := canonicalID(c.ID)
+		if prev, ok := byID[k]; ok && prev != c.ID {
+			ambiguous[k] = true
+		}
+		byID[k] = c.ID
+	}
+	exact := map[string]bool{}
+	for _, c := range claims {
+		exact[c.ID] = true
+	}
+	var out []Verdict
+	var unknown []string
+	for _, v := range verdicts {
+		if exact[v.ID] {
+			out = append(out, v)
+			continue
+		}
+		k := canonicalID(v.ID)
+		if id, ok := byID[k]; ok && !ambiguous[k] {
+			v.ID = id
+			out = append(out, v)
+			continue
+		}
+		unknown = append(unknown, v.ID)
+	}
+	return out, unknown
+}
+
+var (
+	idIndexDot = regexp.MustCompile(`\.(\d+)`)
+	idName     = regexp.MustCompile(`[a-z_]+`)
+)
+
+// canonicalID folds the variants of a claim id that models produce:
+// "Letter.Paragraph[0]", "letter.paragraphs.0" and " letter.paragraphs[ 0 ]"
+// all become "letter.paragraph[0]".
+func canonicalID(id string) string {
+	id = strings.Join(strings.Fields(strings.ToLower(id)), "")
+	id = strings.Trim(id, "`\"'")
+	id = idIndexDot.ReplaceAllString(id, "[$1]")
+	return idName.ReplaceAllStringFunc(id, func(s string) string { return strings.TrimSuffix(s, "s") })
 }
 
 // review asks the fact-checker for a verdict on each claim. extra holds the

@@ -663,6 +663,34 @@ func TestSkippedClaimsAreReviewedAgain(t *testing.T) {
 	}
 }
 
+// Claims the fact-checker keeps skipping are not sent to the writer: the same
+// draft is verified again, and they are dropped only when the rounds run out.
+func TestUnreviewedClaimsAreVerifiedAgainNotRepaired(t *testing.T) {
+	docs := baseDocs()
+	claims := docs.claims()
+	allButLast := func(llm.Request) (json.RawMessage, error) {
+		var rep VerificationReport
+		for _, c := range claims[:len(claims)-1] {
+			rep.Verdicts = append(rep.Verdicts, Verdict{ID: c.ID, Status: "supported"})
+		}
+		return json.Marshal(rep)
+	}
+	none := llm.Reply(VerificationReport{})
+	// Round 1: review + re-ask; round 2 (no tailoring in between): the same.
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allButLast, none, allButLast, none)
+	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 6 {
+		t.Fatalf("calls = %d, want 6 (no repair call)", len(fake.Calls))
+	}
+	last := claims[len(claims)-1].ID
+	if len(res.Dropped) != 1 || res.Dropped[0].ID != last || res.Dropped[0].Reason != notReviewed {
+		t.Fatalf("dropped = %+v", res.Dropped)
+	}
+}
+
 // A keyword that only the Skills block filled in from the profile contains is
 // present in the CV, so the ATS result must be computed after the fill.
 func TestATSCountsSkillsFilledFromProfile(t *testing.T) {

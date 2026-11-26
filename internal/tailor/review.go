@@ -33,9 +33,23 @@ type findings struct {
 	// Gaps are keywords the profile supports but the CV under-uses; they only
 	// trigger a repair round.
 	Gaps map[string]keywordGap
+	// Unreviewed are claims the fact-checker gave no verdict for, in document
+	// order. The writer cannot fix them, so they are not sent for repair: they
+	// are verified again and dropped if they never get a verdict.
+	Unreviewed []string
 }
 
-func (f findings) clean() bool { return len(f.Issues)+len(f.Courses)+len(f.Gaps) == 0 }
+func (f findings) clean() bool {
+	return len(f.Issues)+len(f.Courses)+len(f.Gaps)+len(f.Unreviewed) == 0
+}
+
+// onlyUnreviewed reports whether the fact-checker's silence is all that is
+// wrong, so that verifying again is enough and the writer need not run.
+func (f findings) onlyUnreviewed() bool {
+	return len(f.Unreviewed) > 0 && len(f.Issues)+len(f.Courses)+len(f.Gaps) == 0
+}
+
+const notReviewed = "not reviewed by the fact-checker"
 
 // Prepare runs right after every tailoring call, before any claim ref is
 // taken: the degrees are put in order of relevance, so that a course shared by
@@ -76,14 +90,15 @@ func (r *draftReview) Review(d *Documents, rep VerificationReport) findings {
 			}
 		}
 	}
+	var unreviewed []string
 	for _, c := range claims {
 		if _, ok := issues[c.ID]; !ok && !seen[c.ID] {
-			issues[c.ID] = "not reviewed by the fact-checker"
+			unreviewed = append(unreviewed, c.ID)
 		}
 	}
 
 	_, gaps := keywordStatus(r.prof, d, r.analysis, rep.Keywords)
-	return findings{Issues: issues, Courses: duplicateCourseIssues(d, r.catalog), Gaps: gaps}
+	return findings{Issues: issues, Courses: duplicateCourseIssues(d, r.catalog), Gaps: gaps, Unreviewed: unreviewed}
 }
 
 // problems is the repair note for the writer: every flagged claim, in
@@ -108,10 +123,17 @@ func (f findings) problems(d *Documents) string {
 // missingKeywords is the repair note for supported keywords the CV under-uses.
 func (f findings) missingKeywords(a JobAnalysis) string { return missingKeywordsList(a, f.Gaps) }
 
-// GiveUp ends the repair rounds: flagged claims are removed and repeated
-// courses deduplicated.
+// GiveUp ends the repair rounds: flagged and unreviewed claims are removed and
+// repeated courses deduplicated.
 func (r *draftReview) GiveUp(d *Documents, f findings) ([]Dropped, []string) {
-	dropped := drop(d, f.Issues)
+	issues := make(map[string]string, len(f.Issues)+len(f.Unreviewed))
+	for id, reason := range f.Issues {
+		issues[id] = reason
+	}
+	for _, id := range f.Unreviewed {
+		issues[id] = notReviewed
+	}
+	dropped := drop(d, issues)
 	return dropped, dedupeCoursework(d, r.catalog)
 }
 

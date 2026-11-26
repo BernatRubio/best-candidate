@@ -1,6 +1,7 @@
 package tailor
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -33,14 +34,55 @@ func TestReviewFindings(t *testing.T) {
 		t.Fatalf("issues = %v", f.Issues)
 	}
 
-	// A claim the reviewer skipped counts as unreviewed; a verdict is kept.
+	// A claim the reviewer skipped counts as unreviewed, not as an issue, and
+	// is not sent to the writer; a verdict is kept.
 	d = baseDocs()
 	f = rv.Review(&d, VerificationReport{Verdicts: []Verdict{{ID: "cv.experience[0]", Status: "exaggerated", Reason: "x"}}})
-	if f.Issues["cv.experience[0].bullets[0]"] != "not reviewed by the fact-checker" || f.Issues["cv.experience[0]"] != "exaggerated: x" {
+	if f.Issues["cv.experience[0]"] != "exaggerated: x" || f.Issues["cv.experience[0].bullets[0]"] != "" {
 		t.Fatalf("issues = %v", f.Issues)
 	}
-	if !strings.Contains(f.problems(&d), "cv.experience[0]: ") {
-		t.Fatalf("problems = %s", f.problems(&d))
+	if !slices.Contains(f.Unreviewed, "cv.experience[0].bullets[0]") || f.onlyUnreviewed() {
+		t.Fatalf("unreviewed = %v", f.Unreviewed)
+	}
+	if p := f.problems(&d); !strings.Contains(p, "cv.experience[0]: ") || strings.Contains(p, "bullets[0]") {
+		t.Fatalf("problems = %s", p)
+	}
+
+	// Unreviewed claims are dropped when the rounds run out.
+	dropped, _ := rv.GiveUp(&d, f)
+	var reasons []string
+	for _, x := range dropped {
+		reasons = append(reasons, x.ID+"="+x.Reason)
+	}
+	if !slices.Contains(reasons, "cv.experience[0].bullets[0]="+notReviewed) {
+		t.Fatalf("dropped = %v", reasons)
+	}
+}
+
+func TestMatchVerdictsToleratesIDVariants(t *testing.T) {
+	d := baseDocs()
+	claims := d.claims()
+	var letter string
+	for _, c := range claims {
+		if strings.HasPrefix(c.ID, "letter.paragraphs[") {
+			letter = c.ID
+			break
+		}
+	}
+	if letter == "" {
+		t.Fatal("baseDocs has no letter paragraph")
+	}
+	variant := strings.Replace(strings.Replace(letter, "paragraphs[", "Paragraph.", 1), "]", "", 1)
+	got, unknown := matchVerdicts(claims, []Verdict{
+		{ID: variant, Status: "supported"},
+		{ID: "`" + claims[0].ID + "`", Status: "supported"},
+		{ID: "cv.nonsense[9]", Status: "supported"},
+	})
+	if len(got) != 2 || got[0].ID != letter || got[1].ID != claims[0].ID {
+		t.Fatalf("matched = %+v", got)
+	}
+	if len(unknown) != 1 || unknown[0] != "cv.nonsense[9]" {
+		t.Fatalf("unknown = %v", unknown)
 	}
 }
 
