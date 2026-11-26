@@ -44,10 +44,11 @@ func main() {
 	root.AddCommand(initCmd(), generateCmd(), renderCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
 		if errors.Is(err, errDropped) {
+			fmt.Fprintln(os.Stderr, "warning:", err)
 			os.Exit(2)
 		}
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
