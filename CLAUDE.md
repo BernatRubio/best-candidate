@@ -7,7 +7,7 @@ The project was deliberately cut back to a barebone version so the user can grow
 ## Commands
 
 ```sh
-go build -o best-candidate ./cmd/best-candidate   # build (bin/ is git-ignored too)
+go build -o bin/best-candidate ./cmd/best-candidate   # build
 go vet ./... && go test ./...                     # lint and test
 go test ./internal/tailor -run TestRunLanguage -v # one test
 ```
