@@ -66,7 +66,7 @@ func initCmd() *cobra.Command {
 			if err := os.WriteFile(path, []byte(bestcandidate.ExampleProfile), 0o600); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s. Fill it in, then run:\n  best-candidate generate --job <file|url|->\n", path)
+			fmt.Fprintf(cmd.OutOrStdout(), "Wrote %s. Fill it in, then run:\n  best-candidate generate <offer.md|url>\n", path)
 			return nil
 		},
 	}
@@ -76,18 +76,16 @@ func initCmd() *cobra.Command {
 
 func generateCmd() *cobra.Command {
 	var (
-		profilePath, job, lang, outDir string
-		providerName, model, baseURL   string
-		maxRepairs                     int
+		profilePath, lang, outDir    string
+		providerName, model, baseURL string
+		maxRepairs                   int
 	)
 	cmd := &cobra.Command{
-		Use:   "generate",
-		Short: "Generate a CV and cover letter for a job offer",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if job == "" {
-				return errors.New("--job is required (markdown file or URL)")
-			}
+		Use:   "generate <offer>",
+		Short: "Generate a CV and cover letter for a job offer (markdown file or http(s) URL)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			job := args[0]
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			logf := func(format string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...) }
@@ -144,7 +142,6 @@ func generateCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&profilePath, "profile", "profile.md", "path to your master profile")
-	f.StringVar(&job, "job", "", "job offer: markdown file or http(s) URL")
 	f.StringVar(&lang, "lang", "auto", "output language (ISO 639-1, e.g. en, es, ca) or auto to follow the offer")
 	f.StringVar(&outDir, "out", "out", "directory for generated applications")
 	f.StringVar(&providerName, "provider", "anthropic", "model provider: "+llm.Supported+" (env BC_PROVIDER overrides)")

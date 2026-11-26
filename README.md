@@ -45,8 +45,8 @@ shared course identically in both lists so the repeat can be detected. The templ
 Then generate documents for each offer, given as a markdown file or a URL:
 
 ```sh
-./best-candidate generate --job offer.md
-./best-candidate generate --job https://example.com/jobs/123
+./best-candidate generate offer.md
+./best-candidate generate https://example.com/jobs/123
 ```
 
 Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a file instead.
@@ -99,7 +99,7 @@ supports tools:
 ```sh
 BC_API_KEY=sk-or-... BC_JSON_MODE=tool BC_MAX_TOKENS=32000 ./best-candidate generate \
   --provider openai-compatible --base-url https://openrouter.ai/api/v1 \
-  --model nvidia/nemotron-3-ultra-550b-a55b:free --job offer.md
+  --model nvidia/nemotron-3-ultra-550b-a55b:free offer.md
 ```
 
 ## How statements are verified
