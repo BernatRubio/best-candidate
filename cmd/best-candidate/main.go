@@ -87,11 +87,11 @@ func generateCmd() *cobra.Command {
 and checks every statement against your profile. Statements that cannot be verified are
 removed and listed in report.md.
 
-The job offer can be a file, an http(s) URL, or "-" for stdin.`,
+The job offer can be a markdown file or an http(s) URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if job == "" {
-				return errors.New("--job is required (file, URL, or - for stdin)")
+				return errors.New("--job is required (markdown file or URL)")
 			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
@@ -101,7 +101,7 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 			if err != nil {
 				return err
 			}
-			offer, err := joboffer.Load(ctx, job, cmd.InOrStdin())
+			offer, err := joboffer.Load(ctx, job)
 			if err != nil {
 				return err
 			}
@@ -149,7 +149,7 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&profilePath, "profile", "profile.md", "path to your master profile")
-	f.StringVar(&job, "job", "", "job offer: file path, http(s) URL, or - for stdin")
+	f.StringVar(&job, "job", "", "job offer: markdown file or http(s) URL")
 	f.StringVar(&lang, "lang", "auto", "output language (ISO 639-1, e.g. en, es, ca) or auto to follow the offer")
 	f.StringVar(&outDir, "out", "out", "directory for generated applications")
 	f.StringVar(&providerName, "provider", "anthropic", "model provider: "+llm.Supported+" (env BC_PROVIDER overrides)")

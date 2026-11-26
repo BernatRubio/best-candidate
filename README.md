@@ -42,12 +42,11 @@ courses for each job and never names the same course under two degrees: a course
 degrees (for example recognised credits) appears under the one that fits the job best. Spell a
 shared course identically in both lists so the repeat can be detected. The template shows the format.
 
-Then generate documents for each offer, given as a file, a URL or stdin:
+Then generate documents for each offer, given as a markdown file or a URL:
 
 ```sh
 ./best-candidate generate --job offer.md
 ./best-candidate generate --job https://example.com/jobs/123
-pbpaste | ./best-candidate generate --job -
 ```
 
 Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a file instead.

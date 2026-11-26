@@ -10,38 +10,33 @@ import (
 	"testing"
 )
 
-func TestLoadStdin(t *testing.T) {
-	got, err := Load(context.Background(), "-", strings.NewReader("  Senior Go developer \n"))
-	if err != nil {
+func writeOffer(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "offer.md")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got != "Senior Go developer" {
-		t.Fatalf("got %q", got)
-	}
+	return path
 }
 
 func TestLoadFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "offer.md")
-	if err := os.WriteFile(path, []byte("# Backend engineer\nGo, Postgres"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Load(context.Background(), path, nil)
+	got, err := Load(context.Background(), writeOffer(t, "  # Backend engineer\nGo, Postgres \n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "Postgres") {
+	if got != "# Backend engineer\nGo, Postgres" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestLoadEmpty(t *testing.T) {
-	if _, err := Load(context.Background(), "-", strings.NewReader("  \n")); err == nil {
+	if _, err := Load(context.Background(), writeOffer(t, "  \n")); err == nil {
 		t.Fatal("expected error for empty offer")
 	}
 }
 
 func TestLoadMissingFile(t *testing.T) {
-	if _, err := Load(context.Background(), "/nonexistent/offer.md", nil); err == nil {
+	if _, err := Load(context.Background(), "/nonexistent/offer.md"); err == nil {
 		t.Fatal("expected error for missing file")
 	}
 }
@@ -60,7 +55,7 @@ func TestFetchURLHTML(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := Load(context.Background(), srv.URL, nil)
+	got, err := Load(context.Background(), srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +69,7 @@ func TestFetchURLHTML(t *testing.T) {
 func TestFetchURLNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
-	if _, err := Load(context.Background(), srv.URL, nil); err == nil {
+	if _, err := Load(context.Background(), srv.URL); err == nil {
 		t.Fatal("expected error for 404")
 	}
 }

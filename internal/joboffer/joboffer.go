@@ -1,4 +1,4 @@
-// Package joboffer loads a job offer from a file, a URL or stdin and returns
+// Package joboffer loads a job offer from a file or a URL and returns
 // it as plain markdown text.
 package joboffer
 
@@ -21,17 +21,14 @@ const (
 	fetchTimeout = 30 * time.Second
 )
 
-// Load resolves src to the offer text. "-" reads stdin, an http(s) URL is
-// fetched and reduced to its main readable content, anything else is a file.
-func Load(ctx context.Context, src string, stdin io.Reader) (string, error) {
+// Load resolves src to the offer text. An http(s) URL is fetched and reduced
+// to its main readable content; anything else is read as a file.
+func Load(ctx context.Context, src string) (string, error) {
 	var text string
 	var err error
-	switch {
-	case src == "-":
-		text, err = readAll(stdin)
-	case strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://"):
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 		text, err = fetchURL(ctx, http.DefaultClient, src)
-	default:
+	} else {
 		var data []byte
 		data, err = os.ReadFile(src)
 		text = string(data)

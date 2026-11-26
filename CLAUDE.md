@@ -16,7 +16,7 @@ Running the tool needs a model API key, read from the shell or from a `.env` fil
 
 ```sh
 ./best-candidate init                    # writes profile.md from examples/profile.example.md
-./best-candidate generate --job offer.md # file, http(s) URL, or - for stdin
+./best-candidate generate --job offer.md # markdown file or http(s) URL
 ./best-candidate render out/<folder>     # rebuild PDFs after editing cv.json/letter.json/*.typ
 ```
 
