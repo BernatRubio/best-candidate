@@ -94,13 +94,14 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 				return errors.New("--job is required (file, URL, or - for stdin)")
 			}
 			ctx := cmd.Context()
-			logf := func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) }
+			out := cmd.OutOrStdout()
+			logf := func(format string, args ...any) { fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...) }
 
 			prof, err := profile.Load(profilePath)
 			if err != nil {
 				return err
 			}
-			offer, err := joboffer.Load(ctx, job, os.Stdin)
+			offer, err := joboffer.Load(ctx, job, cmd.InOrStdin())
 			if err != nil {
 				return err
 			}
@@ -131,18 +132,18 @@ The job offer can be a file, an http(s) URL, or "-" for stdin.`,
 					covered++
 				}
 			}
-			fmt.Printf("\nDone: %s\n", dir)
-			fmt.Printf("  cv.pdf, cover-letter.pdf, report.md (plus editable cv.json, letter.json, *.typ)\n")
-			fmt.Printf("  cv.pdf: %d page(s), cover-letter.pdf: %d page(s)\n", info.CVPages, info.LetterPages)
-			fmt.Printf("  requirements covered by your profile: %d of %d\n", covered, len(res.Docs.Coverage))
+			fmt.Fprintf(out, "\nDone: %s\n", dir)
+			fmt.Fprintln(out, "  cv.pdf, cover-letter.pdf, report.md (plus editable cv.json, letter.json, *.typ)")
+			fmt.Fprintf(out, "  cv.pdf: %d page(s), cover-letter.pdf: %d page(s)\n", info.CVPages, info.LetterPages)
+			fmt.Fprintf(out, "  requirements covered by your profile: %d of %d\n", covered, len(res.Docs.Coverage))
 			for _, w := range res.Warnings {
-				fmt.Printf("  warning: %s\n", w)
+				fmt.Fprintf(out, "  warning: %s\n", w)
 			}
 			if len(res.Dropped) > 0 {
-				fmt.Printf("  %d statement(s) removed because they could not be verified; see report.md\n", len(res.Dropped))
+				fmt.Fprintf(out, "  %d statement(s) removed because they could not be verified; see report.md\n", len(res.Dropped))
 				return errDropped
 			}
-			fmt.Println("  Read both documents before sending: verification is automated, not infallible.")
+			fmt.Fprintln(out, "  Read both documents before sending: verification is automated, not infallible.")
 			return nil
 		},
 	}
