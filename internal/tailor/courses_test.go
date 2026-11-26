@@ -180,8 +180,8 @@ func TestSharedCourseTriggersRepair(t *testing.T) {
 	)
 	fake := llm.NewFake(
 		llm.Reply(analysis),
-		llm.Reply(bad), allSupported(*bad),
-		llm.Reply(fixed), allSupported(*fixed),
+		llm.Reply(bad), allSupported(*bad), allSupported(*bad), // CV, then letter
+		llm.Reply(fixed), allSupported(*fixed), allSupported(*fixed),
 	)
 	res, err := Run(context.Background(), fake, profile.Parse(eduProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
@@ -195,8 +195,8 @@ func TestSharedCourseTriggersRepair(t *testing.T) {
 			t.Fatalf("no course warning expected: %v", res.Warnings)
 		}
 	}
-	if !strings.Contains(fake.Calls[3].User, "only one degree") {
-		t.Fatalf("repair prompt must explain the duplicate:\n%s", fake.Calls[3].User)
+	if !strings.Contains(fake.Calls[4].User, "only one degree") {
+		t.Fatalf("repair prompt must explain the duplicate:\n%s", fake.Calls[4].User)
 	}
 	if got := res.Docs.CV.Education[1].Details[0].Text; strings.Contains(got, "Computer Graphics") {
 		t.Fatalf("second degree still lists the shared course: %q", got)
@@ -212,8 +212,8 @@ func TestPersistentSharedCourseIsDeduplicated(t *testing.T) {
 	)
 	fake := llm.NewFake(
 		llm.Reply(analysis),
-		llm.Reply(bad), allSupported(*bad),
-		llm.Reply(bad), allSupported(*bad),
+		llm.Reply(bad), allSupported(*bad), allSupported(*bad), // CV, then letter
+		llm.Reply(bad), allSupported(*bad), allSupported(*bad),
 	)
 	res, err := Run(context.Background(), fake, profile.Parse(eduProfile), testOffer, Options{MaxRepairs: 1})
 	if err != nil {

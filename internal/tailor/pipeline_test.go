@@ -77,7 +77,7 @@ func TestRunCleanPath(t *testing.T) {
 		}
 		return json.Marshal(rep)
 	}
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), verify)
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), verify, verify)
 
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
@@ -86,8 +86,8 @@ func TestRunCleanPath(t *testing.T) {
 	if strings.Contains(string(fake.Calls[1].Schema), `"coverage"`) {
 		t.Fatal("the writer must not be asked for coverage")
 	}
-	if len(fake.Calls) != 3 {
-		t.Fatalf("want 3 model calls, got %d", len(fake.Calls))
+	if len(fake.Calls) != 4 {
+		t.Fatalf("want 4 model calls, got %d", len(fake.Calls))
 	}
 	if len(res.Dropped) != 0 {
 		t.Fatalf("nothing should be dropped: %+v", res.Dropped)
@@ -124,8 +124,8 @@ func TestRunDropsFabricatedClaim(t *testing.T) {
 	})
 	fake := llm.NewFake(
 		llm.Reply(analysis),
-		llm.Reply(docs), allSupported(docs), // round 1: reviewer is fooled, quote check is not
-		llm.Reply(docs), allSupported(docs), // repair returns the same lie
+		llm.Reply(docs), allSupported(docs), allSupported(docs), // round 1: reviewer is fooled, quote check is not
+		llm.Reply(docs), allSupported(docs), allSupported(docs), // repair returns the same lie
 	)
 
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 1})
@@ -140,7 +140,7 @@ func TestRunDropsFabricatedClaim(t *testing.T) {
 		t.Fatalf("bullets = %+v", bullets)
 	}
 	// The repair call must have been told what was wrong.
-	repair := fake.Calls[3].User
+	repair := fake.Calls[4].User
 	if !strings.Contains(repair, "<problems>") || !strings.Contains(repair, "Led a team of 10") {
 		t.Fatalf("repair prompt lacks problems:\n%s", repair)
 	}
@@ -174,8 +174,8 @@ func TestRunRepairsExaggeration(t *testing.T) {
 
 	fake := llm.NewFake(
 		llm.Reply(analysis),
-		llm.Reply(bad), flag,
-		llm.Reply(fixed), allSupported(fixed),
+		llm.Reply(bad), flag, flag,
+		llm.Reply(fixed), allSupported(fixed), allSupported(fixed),
 	)
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
@@ -192,7 +192,7 @@ func TestRunRepairsExaggeration(t *testing.T) {
 
 func TestLangOverride(t *testing.T) {
 	docs := baseDocs()
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs), allSupported(docs))
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{Lang: "es"})
 	if err != nil {
 		t.Fatal(err)
@@ -245,10 +245,18 @@ func TestPromptsCoverKeyBehaviours(t *testing.T) {
 			t.Errorf("tailor prompt lost %q", want)
 		}
 	}
-	for _, want := range []string{"validated", "interest", "supported"} {
-		if !strings.Contains(verifyPrompt, want) {
-			t.Errorf("verify prompt lost %q", want)
+	for _, want := range []string{"validated", "supported", "<requirements>", "<keywords>"} {
+		if !strings.Contains(verifyCVPrompt, want) {
+			t.Errorf("CV verify prompt lost %q", want)
 		}
+	}
+	for _, want := range []string{"validated", "interest", "supported", "no `cited` quotes"} {
+		if !strings.Contains(verifyLetterPrompt, want) {
+			t.Errorf("letter verify prompt lost %q", want)
+		}
+	}
+	if strings.Contains(verifyCVPrompt, "interest in the role") || strings.Contains(verifyLetterPrompt, "<keywords>") {
+		t.Error("each verify prompt must hold only its own part")
 	}
 }
 
@@ -288,8 +296,8 @@ func TestCrossReferenceTriggersRepair(t *testing.T) {
 	}}
 	fake := llm.NewFake(
 		llm.Reply(analysis),
-		llm.Reply(bad), allSupported(bad),
-		llm.Reply(fixed), allSupported(fixed),
+		llm.Reply(bad), allSupported(bad), allSupported(bad),
+		llm.Reply(fixed), allSupported(fixed), allSupported(fixed),
 	)
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
@@ -298,8 +306,8 @@ func TestCrossReferenceTriggersRepair(t *testing.T) {
 	if len(res.Dropped) != 0 {
 		t.Fatalf("dropped = %+v", res.Dropped)
 	}
-	if !strings.Contains(fake.Calls[3].User, "stand on its own") {
-		t.Fatalf("repair prompt lacks the cross-reference problem:\n%s", fake.Calls[3].User)
+	if !strings.Contains(fake.Calls[4].User, "stand on its own") {
+		t.Fatalf("repair prompt lacks the cross-reference problem:\n%s", fake.Calls[4].User)
 	}
 	if got := res.Docs.CV.Education[0].Details[0].Text; !strings.HasPrefix(got, "Relevant coursework") {
 		t.Fatalf("detail = %q", got)
@@ -313,7 +321,7 @@ func TestRankingMustBeInProfile(t *testing.T) {
 		{Degree: "A", Institution: "Northfield", Ranking: "Top 25%", Sources: []string{"Top 25%"}},
 		{Degree: "B", Institution: "Northfield", Ranking: "Top 3%", Sources: []string{"Top 25%"}},
 	}
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs), allSupported(docs))
 	res, err := Run(context.Background(), fake, profile.Parse(text), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -546,13 +554,13 @@ func TestCourseworkRemarkTriggersRepair(t *testing.T) {
 			{Text: "Taught entirely in English", Sources: []string{"Go, PostgreSQL, Docker"}},
 		},
 	}}
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(bad), allSupported(bad), llm.Reply(fixed), allSupported(fixed))
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(bad), allSupported(bad), allSupported(bad), llm.Reply(fixed), allSupported(fixed), allSupported(fixed))
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fake.Calls[3].User, "own line") {
-		t.Fatalf("repair prompt lacks the problem:\n%s", fake.Calls[3].User)
+	if !strings.Contains(fake.Calls[4].User, "own line") {
+		t.Fatalf("repair prompt lacks the problem:\n%s", fake.Calls[4].User)
 	}
 	if got := res.Docs.CV.Education[0].Details; len(got) != 2 || strings.Contains(got[0].Text, "(") {
 		t.Fatalf("details = %+v", got)
@@ -617,7 +625,7 @@ func TestRunOrdersDegreesByRelevance(t *testing.T) {
 	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), func(llm.Request) (json.RawMessage, error) {
 		// The reviewer sees the claims in the sorted order.
 		return allSupported(Documents{CV: CV{Education: []Education{docs.CV.Education[1], docs.CV.Education[0]}}})(llm.Request{})
-	}, llm.Reply(VerificationReport{}))
+	}, llm.Reply(VerificationReport{}), llm.Reply(VerificationReport{}), llm.Reply(VerificationReport{}))
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -647,7 +655,8 @@ func TestSkippedClaimsAreReviewedAgain(t *testing.T) {
 		}
 		return json.Marshal(rep)
 	}
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), first, rest)
+	// CV check, its re-ask, then the letter check.
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), first, rest, allSupported(docs))
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 0})
 	if err != nil {
 		t.Fatal(err)
@@ -676,14 +685,15 @@ func TestUnreviewedClaimsAreVerifiedAgainNotRepaired(t *testing.T) {
 		return json.Marshal(rep)
 	}
 	none := llm.Reply(VerificationReport{})
-	// Round 1: review + re-ask; round 2 (no tailoring in between): the same.
-	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allButLast, none, allButLast, none)
+	// The last claim is the letter paragraph. Each round: the CV check, the
+	// letter check and its re-ask; round 2 follows with no tailoring between.
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allButLast, none, none, allButLast, none, none)
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.Calls) != 6 {
-		t.Fatalf("calls = %d, want 6 (no repair call)", len(fake.Calls))
+	if len(fake.Calls) != 8 {
+		t.Fatalf("calls = %d, want 8 (no repair call)", len(fake.Calls))
 	}
 	last := claims[len(claims)-1].ID
 	if len(res.Dropped) != 1 || res.Dropped[0].ID != last || res.Dropped[0].Reason != notReviewed {
@@ -726,5 +736,37 @@ func TestRefreshATSAfterCut(t *testing.T) {
 	res.RefreshATS()
 	if len(res.ATS.Present) != 0 || strings.Join(res.ATS.Missing, ",") != "Docker" {
 		t.Fatalf("ats = %+v", res.ATS)
+	}
+}
+
+// The CV and the letter are fact-checked in separate calls: the CV call holds
+// the requirements and keywords, the letter call only the paragraphs, with its
+// own prompt and a verdicts-only schema.
+func TestCVAndLetterAreCheckedSeparately(t *testing.T) {
+	docs := baseDocs()
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs), allSupported(docs))
+	if _, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	cv, letter := fake.Calls[2], fake.Calls[3]
+	if cv.System != verifyCVPrompt || !strings.Contains(cv.User, "<requirements>") || strings.Contains(cv.User, "id: letter.") {
+		t.Fatalf("CV call:\n%s", cv.User)
+	}
+	if letter.System != verifyLetterPrompt || strings.Contains(letter.User, "<requirements>") || strings.Contains(letter.User, "id: cv.") ||
+		!strings.Contains(letter.User, "id: letter.paragraphs[0]") || strings.Contains(string(letter.Schema), `"coverage"`) {
+		t.Fatalf("letter call:\n%s\nschema: %s", letter.User, letter.Schema)
+	}
+}
+
+// A letter without paragraphs costs no letter call.
+func TestEmptyLetterIsNotChecked(t *testing.T) {
+	docs := baseDocs()
+	docs.Letter.Paragraphs = nil
+	fake := llm.NewFake(llm.Reply(analysis), llm.Reply(docs), allSupported(docs))
+	if _, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 3 {
+		t.Fatalf("calls = %d", len(fake.Calls))
 	}
 }

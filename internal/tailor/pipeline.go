@@ -19,7 +19,20 @@ var analyzePrompt string
 var tailorPrompt string
 
 //go:embed prompts/verify.md
-var verifyPrompt string
+var verifyBase string
+
+//go:embed prompts/verify_cv.md
+var verifyCVPart string
+
+//go:embed prompts/verify_letter.md
+var verifyLetterPart string
+
+// The fact-checker checks the CV and the letter in separate calls: the letter
+// paragraphs came last in one long list, and models often stopped before them.
+var (
+	verifyCVPrompt     = verifyBase + "\n" + verifyCVPart
+	verifyLetterPrompt = verifyBase + "\n" + verifyLetterPart
+)
 
 // Options tune a pipeline run.
 type Options struct {
@@ -200,13 +213,37 @@ func tailorDocs(ctx context.Context, p llm.Provider, profile, offer string, a Jo
 }
 
 // verify asks the fact-checker for a verdict on every claim, the coverage of
-// the requirements and the support for each keyword. Some models stop part way
-// through a long list, so the claims they skip are asked about once more, on
-// their own. Verdict ids are matched to the claims leniently (see canonicalID),
-// and whatever still does not match is logged.
+// the requirements and the support for each keyword. The CV (with the
+// requirements and keywords) and the letter are checked in separate calls.
 func verify(ctx context.Context, p llm.Provider, profile, offer string, analysis JobAnalysis, docs *Documents, opt Options) (VerificationReport, error) {
-	claims := docs.claims()
-	report, err := review(ctx, p, profile, offer, requirementsTag(analysis)+keywordsTag(analysis), claims)
+	var cvClaims, letterClaims []flatClaim
+	for _, c := range docs.claims() {
+		if c.Ref.Kind == kindLetterParagraph {
+			letterClaims = append(letterClaims, c)
+		} else {
+			cvClaims = append(cvClaims, c)
+		}
+	}
+	report, err := checkPart(ctx, p, verifyCVPrompt, profile, offer, requirementsTag(analysis)+keywordsTag(analysis), cvClaims, opt)
+	if err != nil {
+		return report, err
+	}
+	if len(letterClaims) > 0 {
+		letter, err := checkPart(ctx, p, verifyLetterPrompt, profile, offer, "", letterClaims, opt)
+		if err != nil {
+			return report, err
+		}
+		report.Verdicts = append(report.Verdicts, letter.Verdicts...)
+	}
+	return report, nil
+}
+
+// checkPart asks the fact-checker about one document's claims. Some models
+// stop part way through a list, so the claims they skip are asked about once
+// more, on their own. Verdict ids are matched to the claims leniently (see
+// canonicalID), and whatever still does not match is logged.
+func checkPart(ctx context.Context, p llm.Provider, system, profile, offer, extra string, claims []flatClaim, opt Options) (VerificationReport, error) {
+	report, err := review(ctx, p, system, profile, offer, extra, claims)
 	if err != nil {
 		return report, err
 	}
@@ -214,7 +251,7 @@ func verify(ctx context.Context, p llm.Provider, profile, offer string, analysis
 	report.Verdicts, unknown = matchVerdicts(claims, report.Verdicts)
 	skipped := unanswered(claims, report.Verdicts)
 	if len(skipped) > 0 {
-		more, err := review(ctx, p, profile, offer, "", skipped)
+		more, err := review(ctx, p, system, profile, offer, "", skipped)
 		if err != nil {
 			return report, err
 		}
@@ -301,22 +338,33 @@ func canonicalID(id string) string {
 }
 
 // review asks the fact-checker for a verdict on each claim. extra holds the
-// optional requirements and keywords blocks.
-func review(ctx context.Context, p llm.Provider, profile, offer, extra string, claims []flatClaim) (VerificationReport, error) {
+// optional requirements and keywords blocks; without them the schema asks for
+// verdicts only.
+func review(ctx context.Context, p llm.Provider, system, profile, offer, extra string, claims []flatClaim) (VerificationReport, error) {
+	schema := llm.SchemaFor[VerificationReport]()
+	if extra == "" {
+		schema = llm.SchemaFor[verdictsOnly]()
+	}
 	var list strings.Builder
 	for _, c := range claims {
 		fmt.Fprintf(&list, "id: %s\ntext: %s\ncited: %s\n\n", c.ID, c.Text, strings.Join(c.Sources, " / "))
 	}
 	raw, err := p.GenerateJSON(ctx, llm.Request{
-		System: verifyPrompt,
+		System: system,
 		User: tag("profile", profile) + tag("job_offer", offer) + extra + tag("claims", list.String()) +
 			fmt.Sprintf("Fact-check all %d claims above against the profile and return one verdict per id.", len(claims)),
-		Schema: llm.SchemaFor[VerificationReport](),
+		Schema: schema,
 	})
 	if err != nil {
 		return VerificationReport{}, fmt.Errorf("verifying documents: %w", err)
 	}
 	return decode[VerificationReport](raw, "verification report")
+}
+
+// verdictsOnly is the fact-checker's output when there are no requirements or
+// keywords to assess: a re-ask, or the letter.
+type verdictsOnly struct {
+	Verdicts []Verdict `json:"verdicts"`
 }
 
 // requirementsTag lists the offer's requirements for the fact-checker to assess.

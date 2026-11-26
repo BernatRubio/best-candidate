@@ -70,18 +70,18 @@ func TestMissingKeywordTriggersRepairWithoutDrops(t *testing.T) {
 			return json.Marshal(r)
 		}
 	}
-	fake := llm.NewFake(llm.Reply(a), llm.Reply(docs), verify(docs), llm.Reply(repaired), verify(repaired))
+	fake := llm.NewFake(llm.Reply(a), llm.Reply(docs), verify(docs), verify(docs), llm.Reply(repaired), verify(repaired), verify(repaired))
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.Calls) != 5 {
-		t.Fatalf("want 5 calls, got %d", len(fake.Calls))
+	if len(fake.Calls) != 7 {
+		t.Fatalf("want 7 calls, got %d", len(fake.Calls))
 	}
-	if !strings.Contains(fake.Calls[3].User, "<missing_keywords>") || !strings.Contains(fake.Calls[3].User, "PostgreSQL") {
-		t.Fatalf("repair call lacks the missing keyword:\n%s", fake.Calls[3].User)
+	if !strings.Contains(fake.Calls[4].User, "<missing_keywords>") || !strings.Contains(fake.Calls[4].User, "PostgreSQL") {
+		t.Fatalf("repair call lacks the missing keyword:\n%s", fake.Calls[4].User)
 	}
-	if strings.Contains(fake.Calls[3].User, "Kafka") && strings.Contains(fake.Calls[3].User, "missing_keywords>\n- Kafka") {
+	if strings.Contains(fake.Calls[4].User, "Kafka") && strings.Contains(fake.Calls[4].User, "missing_keywords>\n- Kafka") {
 		t.Fatal("unsupported keyword must not be requested")
 	}
 	if len(res.Dropped) != 0 {
@@ -104,7 +104,7 @@ func TestKeywordGapAfterLastRepairIsOnlyReported(t *testing.T) {
 		r.Keywords = []KeywordSupport{{Term: "PostgreSQL", Supported: true, Evidence: "Go, PostgreSQL, Docker"}}
 		return json.Marshal(r)
 	}
-	fake := llm.NewFake(llm.Reply(a), llm.Reply(docs), verify)
+	fake := llm.NewFake(llm.Reply(a), llm.Reply(docs), verify, verify)
 	res, err := Run(context.Background(), fake, profile.Parse(testProfile), testOffer, Options{MaxRepairs: 0})
 	if err != nil {
 		t.Fatal(err)
@@ -125,7 +125,7 @@ func TestATSPromptsAndSchema(t *testing.T) {
 			t.Errorf("analyze prompt lost %q", want)
 		}
 	}
-	if !strings.Contains(verifyPrompt, "<keywords>") {
+	if !strings.Contains(verifyCVPrompt, "<keywords>") {
 		t.Error("verify prompt does not describe the keywords block")
 	}
 	schema := string(llm.SchemaFor[JobAnalysis]())

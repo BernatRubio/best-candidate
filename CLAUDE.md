@@ -31,7 +31,7 @@ The product invariant is honesty: every statement about the candidate must be ba
 **Flow** (`cmd/best-candidate/main.go`): `profile.Load` → `joboffer.Load` → `llm.FromEnv` (+ `WithProgress`) → `tailor.Run` → `render.Build`.
 
 **`internal/tailor`**, the core, split in two:
-- `pipeline.go` holds only the model protocol. It makes three kinds of call: `analyze` (offer → `JobAnalysis`), `tailorDocs` (writer → CV and letter) and `verify` (fact-checker). The loop is tailor → verify → repair, for up to `MaxRepairs` rounds. `verify` re-asks once about claims the fact-checker skipped, because some models stop part way through long lists.
+- `pipeline.go` holds only the model protocol. It makes three kinds of call: `analyze` (offer → `JobAnalysis`), `tailorDocs` (writer → CV and letter) and `verify` (fact-checker). The loop is tailor → verify → repair, for up to `MaxRepairs` rounds. `verify` checks the CV (with the requirements and keywords, `prompts/verify.md` + `verify_cv.md`) and the letter (`verify.md` + `verify_letter.md`) in separate calls, and each part re-asks once about claims the fact-checker skipped, because some models stop part way through long lists.
 - `review.go` (`draftReview`) holds everything the program checks and fixes itself, and decides their order:
   - `Prepare` runs after every tailoring call and sorts degrees before any claim ref is taken.
   - `Review` combines quote grounding, rule checks and the fact-checker's verdicts into `findings` (issues, repeated courses, keyword gaps).
@@ -51,6 +51,6 @@ The product invariant is honesty: every statement about the candidate must be ba
 
 ## Testing conventions
 
-`tailor` pipeline tests script `llm.NewFake` with one handler per model call, in call order (analyze, tailor, verify, [re-review], ...). Changing how many calls `Run` makes breaks them. Prefer testing checks directly through `draftReview` (`review_test.go`), which needs no fake.
+`tailor` pipeline tests script `llm.NewFake` with one handler per model call, in call order (analyze, tailor, verify CV, [CV re-ask], verify letter, [letter re-ask], ...; the letter call is skipped when the letter has no paragraphs). Changing how many calls `Run` makes breaks them. Prefer testing checks directly through `draftReview` (`review_test.go`), which needs no fake.
 
 Domain terms are defined in `GLOSSARY.md`.
