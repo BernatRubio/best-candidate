@@ -25,45 +25,12 @@ type Provider interface {
 	GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error)
 }
 
-// Config configures the OpenAI-compatible provider.
-type Config struct {
-	Model   string
-	BaseURL string
-}
-
-// DefaultBaseURL is OpenRouter's API.
-const DefaultBaseURL = "https://openrouter.ai/api/v1"
-
-// New builds an OpenAI-compatible provider with retries. The API key is read
-// from BC_API_KEY.
-func New(c Config) (Provider, error) {
-	if c.Model == "" {
-		return nil, fmt.Errorf("a model is needed: pass --model or set BC_MODEL")
+// FromEnv builds the Claude CLI provider. BC_MODEL overrides the flag value.
+func FromEnv(model string) Provider {
+	if m := os.Getenv("BC_MODEL"); m != "" {
+		model = m
 	}
-	o := NewOpenAICompat(OpenAICompatConfig{
-		BaseURL: firstNonEmpty(c.BaseURL, DefaultBaseURL),
-		APIKey:  os.Getenv("BC_API_KEY"),
-		Model:   c.Model,
-	})
-	return WithRetry(o, compatRetry), nil
-}
-
-// FromEnv builds a provider from BC_MODEL / BC_BASE_URL, using the flag values
-// as the fallback.
-func FromEnv(flags Config) (Provider, error) {
-	return New(Config{
-		Model:   firstNonEmpty(os.Getenv("BC_MODEL"), flags.Model),
-		BaseURL: firstNonEmpty(os.Getenv("BC_BASE_URL"), flags.BaseURL),
-	})
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
+	return &ClaudeCLI{Model: model}
 }
 
 // ExtractJSON pulls one JSON value out of model text that may be wrapped in a

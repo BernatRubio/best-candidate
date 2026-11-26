@@ -3,126 +3,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
-	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 )
-
-func chatReply(content, finish string) string {
-	b, _ := json.Marshal(map[string]any{
-		"choices": []map[string]any{{
-			"message":       map[string]string{"content": content},
-			"finish_reason": finish,
-		}},
-	})
-	return string(b)
-}
-
-func newCompat(url string) *OpenAICompat {
-	return NewOpenAICompat(OpenAICompatConfig{BaseURL: url, APIKey: "sk-test", Model: "m"})
-}
-
-// fast applies pol with millisecond waits.
-func fast(p Provider, pol RetryPolicy) Provider {
-	pol.Base = time.Millisecond
-	return WithRetry(p, pol)
-}
-
-var req = Request{System: "be honest", User: "hello", Schema: json.RawMessage(`{"type":"object"}`)}
-
-func TestCompatRetriesTransientErrors(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) < 3 {
-			http.Error(w, `{"error":{"message":"slow down"}}`, http.StatusTooManyRequests)
-			return
-		}
-		_, _ = w.Write([]byte(chatReply(`{"ok":true}`, "stop")))
-	}))
-	defer srv.Close()
-
-	if _, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req); err != nil {
-		t.Fatal(err)
-	}
-	if calls.Load() != 3 {
-		t.Fatalf("calls = %d", calls.Load())
-	}
-}
-
-func TestCompatGivesUpAfterRetries(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, `{"error":{"message":"overloaded"}}`, http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "overloaded") {
-		t.Fatalf("err = %v", err)
-	}
-	if calls.Load() != int32(compatRetry.Attempts) {
-		t.Fatalf("calls = %d", calls.Load())
-	}
-}
-
-func TestCompatDoesNotRetryClientErrors(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, `{"error":{"message":"response_format unsupported"}}`, http.StatusBadRequest)
-	}))
-	defer srv.Close()
-
-	_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "tool calls") {
-		t.Fatalf("err should hint at tool calls: %v", err)
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("calls = %d", calls.Load())
-	}
-}
-
-func TestCompatRefusalAndTruncation(t *testing.T) {
-	for name, tc := range map[string]struct{ body, want string }{
-		"refusal": {`{"choices":[{"message":{"content":"","refusal":"I can't help"},"finish_reason":"stop"}]}`, "declined"},
-		"length":  {chatReply(`{"ok":`, "length"), "cut off"},
-		"badjson": {chatReply("sorry, here you go", "stop"), "valid JSON"},
-		"empty":   {`{"choices":[]}`, "no choices"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			defer srv.Close()
-			_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v, want %q", err, tc.want)
-			}
-		})
-	}
-}
-
-func TestCompatNoAuthHeaderWithoutKey(t *testing.T) {
-	var auth string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(chatReply(`{}`, "stop")))
-	}))
-	defer srv.Close()
-	o := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, Model: "llama"})
-	if _, err := o.GenerateJSON(context.Background(), req); err != nil {
-		t.Fatal(err)
-	}
-	if auth != "" {
-		t.Fatalf("unexpected Authorization header %q", auth)
-	}
-}
 
 func TestExtractJSON(t *testing.T) {
 	for in, want := range map[string]string{
@@ -141,183 +26,6 @@ func TestExtractJSON(t *testing.T) {
 	}
 }
 
-func TestNewNeedsModel(t *testing.T) {
-	if _, err := New(Config{}); err == nil || !strings.Contains(err.Error(), "model") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestFromEnvOverridesFlags(t *testing.T) {
-	t.Setenv("BC_MODEL", "qwen")
-	t.Setenv("BC_BASE_URL", "")
-	p, err := FromEnv(Config{Model: "ignored"})
-	if err != nil || p.Name() != "qwen" {
-		t.Fatalf("%v %v", p, err)
-	}
-}
-
-func TestRetryTransientThenSuccess(t *testing.T) {
-	calls := 0
-	transient := func(err error) bool { return strings.Contains(err.Error(), "busy") }
-	var waits []time.Duration
-	out, err := retry(context.Background(), 5, time.Millisecond, transient,
-		func(_ error, w time.Duration) { waits = append(waits, w) },
-		func() (string, error) {
-			calls++
-			if calls < 3 {
-				return "", errors.New("busy")
-			}
-			return "ok", nil
-		})
-	if err != nil || out != "ok" || calls != 3 {
-		t.Fatalf("out=%q err=%v calls=%d", out, err, calls)
-	}
-	if len(waits) != 2 || waits[1] != 2*waits[0] {
-		t.Fatalf("backoff should double: %v", waits)
-	}
-}
-
-func TestRetryStopsOnPermanentErrorAndAfterAttempts(t *testing.T) {
-	transient := func(err error) bool { return err.Error() == "busy" }
-
-	calls := 0
-	_, err := retry(context.Background(), 5, time.Millisecond, transient, nil, func() (int, error) {
-		calls++
-		return 0, errors.New("bad request")
-	})
-	if err == nil || calls != 1 {
-		t.Fatalf("permanent error must not be retried: err=%v calls=%d", err, calls)
-	}
-
-	calls = 0
-	_, err = retry(context.Background(), 3, time.Millisecond, transient, nil, func() (int, error) {
-		calls++
-		return 0, errors.New("busy")
-	})
-	if err == nil || calls != 3 {
-		t.Fatalf("should give up after 3 attempts: err=%v calls=%d", err, calls)
-	}
-}
-
-func TestRetryHonoursContext(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	calls := 0
-	_, err := retry(ctx, 5, time.Hour, func(error) bool { return true }, nil, func() (int, error) {
-		calls++
-		cancel()
-		return 0, errors.New("busy")
-	})
-	if !errors.Is(err, context.Canceled) || calls != 1 {
-		t.Fatalf("err=%v calls=%d", err, calls)
-	}
-}
-
-func TestAPIMessageShowsUpstreamDetail(t *testing.T) {
-	body := `{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"model is temporarily rate-limited upstream","provider_name":"SomeHost"}}}`
-	got := apiMessage([]byte(body))
-	for _, want := range []string{"Provider returned error", "SomeHost", "rate-limited upstream"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in %q", want, got)
-		}
-	}
-	if got := apiMessage([]byte(`{"error":{"message":"plain"}}`)); got != "plain" {
-		t.Errorf("plain error changed: %q", got)
-	}
-	if got := apiMessage([]byte(`{"error":{"message":"m","metadata":{"raw":{"x":1}}}}`)); !strings.Contains(got, `{"x":1}`) {
-		t.Errorf("object raw not shown: %q", got)
-	}
-	if got := apiMessage([]byte("<html>bad gateway</html>")); !strings.Contains(got, "bad gateway") {
-		t.Errorf("non-JSON body lost: %q", got)
-	}
-}
-
-func TestAuthErrorsExplainTheKey(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, `{"error":{"message":"No cookie auth credentials found","code":401}}`, http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-
-	noKey := NewOpenAICompat(OpenAICompatConfig{BaseURL: srv.URL, Model: "m"})
-	if _, err := noKey.GenerateJSON(context.Background(), req); err == nil || !strings.Contains(err.Error(), "BC_API_KEY") {
-		t.Fatalf("missing key must be explained: %v", err)
-	}
-	withKey := newCompat(srv.URL)
-	if _, err := withKey.GenerateJSON(context.Background(), req); err == nil || !strings.Contains(err.Error(), "rejected") {
-		t.Fatalf("rejected key must be explained: %v", err)
-	}
-}
-
-func TestCompatToolMode(t *testing.T) {
-	var got map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &got)
-		b, _ := json.Marshal(map[string]any{"choices": []map[string]any{{
-			"message": map[string]any{"content": "", "tool_calls": []map[string]any{{
-				"type": "function", "function": map[string]string{"name": "submit", "arguments": `{"ok":true}`},
-			}}},
-			"finish_reason": "tool_calls",
-		}}})
-		_, _ = w.Write(b)
-	}))
-	defer srv.Close()
-
-	out, err := newCompat(srv.URL).GenerateJSON(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(out) != `{"ok":true}` {
-		t.Fatalf("out = %s", out)
-	}
-	if _, ok := got["response_format"]; ok {
-		t.Fatal("response_format must not be sent")
-	}
-	tool := got["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
-	if tool["name"] != "submit" || tool["parameters"].(map[string]any)["type"] != "object" {
-		t.Fatalf("tools = %v", got["tools"])
-	}
-	if got["tool_choice"].(map[string]any)["function"].(map[string]any)["name"] != "submit" {
-		t.Fatalf("tool_choice = %v", got["tool_choice"])
-	}
-	msgs := got["messages"].([]any)
-	if msgs[0].(map[string]any)["content"] != "be honest" || msgs[1].(map[string]any)["role"] != "user" {
-		t.Fatalf("messages = %v", msgs)
-	}
-}
-
-func TestCompatToolModeFallsBackToContent(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(chatReply("<think>maybe {a}</think>\n{\"ok\":true}", "stop")))
-	}))
-	defer srv.Close()
-
-	out, err := newCompat(srv.URL).GenerateJSON(context.Background(), req)
-	if err != nil || string(out) != `{"ok":true}` {
-		t.Fatalf("out=%s err=%v", out, err)
-	}
-}
-
-func TestCompatHonoursRetryAfter(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, `{"error":{"message":"slow down"}}`, http.StatusTooManyRequests)
-			return
-		}
-		_, _ = w.Write([]byte(chatReply(`{"ok":true}`, "stop")))
-	}))
-	defer srv.Close()
-
-	start := time.Now()
-	if _, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req); err != nil {
-		t.Fatal(err)
-	}
-	if d := time.Since(start); d < time.Second {
-		t.Fatalf("Retry-After ignored: waited %s", d)
-	}
-}
-
 func TestExtractJSONSkipsThinking(t *testing.T) {
 	out, err := ExtractJSON("<think>the schema wants {x}</think>```json\n{\"a\":1}\n```")
 	if err != nil || string(out) != `{"a":1}` {
@@ -325,16 +33,27 @@ func TestExtractJSONSkipsThinking(t *testing.T) {
 	}
 }
 
-func TestCompatDoesNotRetryDailyQuota(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		http.Error(w, `{"error":{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits","code":429}}`, http.StatusTooManyRequests)
-	}))
-	defer srv.Close()
+func TestClaudeCLI(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho \"$@\" > " + dir + "/args\ncat > " + dir + "/stdin\n" +
+		`echo '{"is_error":false,"result":"","structured_output":{"ok":true}}'` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	_, err := fast(newCompat(srv.URL), compatRetry).GenerateJSON(context.Background(), req)
-	if err == nil || !strings.Contains(err.Error(), "daily request quota") || calls.Load() != 1 {
-		t.Fatalf("calls=%d err=%v", calls.Load(), err)
+	c := &ClaudeCLI{Model: "sonnet"}
+	out, err := c.GenerateJSON(context.Background(), Request{System: "be honest", User: "hello", Schema: json.RawMessage(`{"type":"object"}`)})
+	if err != nil || string(out) != `{"ok":true}` {
+		t.Fatalf("out=%s err=%v", out, err)
+	}
+	args, _ := os.ReadFile(filepath.Join(dir, "args"))
+	for _, want := range []string{"--tools  --strict-mcp-config --disable-slash-commands", "--system-prompt be honest", `--json-schema {"type":"object"}`, "--model sonnet"} {
+		if !strings.Contains(string(args), want) {
+			t.Errorf("args %q miss %q", args, want)
+		}
+	}
+	if stdin, _ := os.ReadFile(filepath.Join(dir, "stdin")); string(stdin) != "hello" {
+		t.Errorf("stdin = %q", stdin)
 	}
 }

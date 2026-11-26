@@ -8,19 +8,18 @@ every statement with a verbatim quote from your profile. Nothing is verified aut
 
 ## Install
 
-You need [Go](https://go.dev/dl/), [Typst](https://github.com/typst/typst#installation) and an API
-key for an OpenAI-compatible server (OpenRouter by default).
+You need [Go](https://go.dev/dl/), [Typst](https://github.com/typst/typst#installation) and
+[Claude Code](https://claude.com/claude-code) logged in: model calls go through the `claude` CLI and
+use your Claude plan, not an API key.
 
 ```sh
 git clone https://github.com/BernatRubio/best-candidate
 cd best-candidate
 go build -o best-candidate ./cmd/best-candidate
-export BC_API_KEY=sk-or-...
 ```
 
-Instead of exporting keys in every shell, you can put them in a `.env` file in the folder you run the
-command from (for example `BC_API_KEY=...`). It is git-ignored, and variables already set in the shell
-take precedence.
+Settings such as `BC_MODEL` can go in a `.env` file in the folder you run the command from. It is
+git-ignored, and variables already set in the shell take precedence.
 
 ## Usage
 
@@ -42,7 +41,7 @@ Then generate documents for each offer, given as a markdown file or a URL:
 
 ```sh
 ./best-candidate generate --model nvidia/nemotron-3-ultra-550b-a55b:free offer.md
-./best-candidate generate --model <model> https://example.com/jobs/123
+./best-candidate generate https://example.com/jobs/123
 ```
 
 Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a file instead.
@@ -52,8 +51,7 @@ Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a
 | `--profile` | profile path (default `profile.md`) |
 | `--lang` | `auto` (default) follows the offer's language; or `en`, `es`, `ca`, ... |
 | `--out` | output folder (default `out`) |
-| `--model` | model id, required (env `BC_MODEL`) |
-| `--base-url` | OpenAI-compatible API URL (default `https://openrouter.ai/api/v1`, env `BC_BASE_URL`) |
+| `--model` | Claude model, e.g. `sonnet` or `opus` (default: the CLI's; env `BC_MODEL`) |
 
 ## Output
 
@@ -74,9 +72,9 @@ After editing the JSON or the templates, rebuild the PDFs with `./best-candidate
 
 ## Model
 
-The tool talks to any OpenAI-compatible `/chat/completions` server, OpenRouter by default. The API
-key comes from `BC_API_KEY`. The JSON output is requested as a forced tool call, so the model must
-support tools. Each run makes one model call.
+The tool runs `claude -p` with every tool, MCP server and skill disabled, and asks for JSON
+matching a schema (`--json-schema`). Each run makes one model call, counted against your Claude
+plan's usage limits.
 
 The model can still exaggerate: always read both documents before sending them.
 

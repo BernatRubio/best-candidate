@@ -22,8 +22,8 @@ import (
 )
 
 func main() {
-	// API keys may live in a .env file in the folder the command is run from;
-	// variables already set in the shell take precedence.
+	// Settings such as BC_MODEL may live in a .env file in the folder the
+	// command is run from; variables already set in the shell take precedence.
 	if err := dotenv.Load(".env"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: could not read .env:", err)
 	}
@@ -68,8 +68,7 @@ func initCmd() *cobra.Command {
 
 func generateCmd() *cobra.Command {
 	var (
-		profilePath, lang, outDir string
-		model, baseURL            string
+		profilePath, lang, outDir, model string
 	)
 	cmd := &cobra.Command{
 		Use:   "generate <offer>",
@@ -89,11 +88,7 @@ func generateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			provider, err := llm.FromEnv(llm.Config{Model: model, BaseURL: baseURL})
-			if err != nil {
-				return err
-			}
-			provider = llm.WithProgress(provider, logf)
+			provider := llm.WithProgress(llm.FromEnv(model), logf)
 			logf("using %s", provider.Name())
 
 			res, err := tailor.Run(ctx, provider, prof, offer, tailor.Options{
@@ -124,8 +119,7 @@ func generateCmd() *cobra.Command {
 	f.StringVar(&profilePath, "profile", "profile.md", "path to your master profile")
 	f.StringVar(&lang, "lang", "auto", "output language (ISO 639-1, e.g. en, es, ca) or auto to follow the offer")
 	f.StringVar(&outDir, "out", "out", "directory for generated applications")
-	f.StringVar(&model, "model", "", "model id, required (env BC_MODEL overrides)")
-	f.StringVar(&baseURL, "base-url", llm.DefaultBaseURL, "OpenAI-compatible API base URL (env BC_BASE_URL overrides)")
+	f.StringVar(&model, "model", "", "Claude model, e.g. sonnet or opus (default: the claude CLI's; env BC_MODEL overrides)")
 	return cmd
 }
 
