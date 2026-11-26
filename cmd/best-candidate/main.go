@@ -83,12 +83,7 @@ func generateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate a CV and cover letter for a job offer",
-		Long: `Reads your profile and a job offer, writes a tailored CV and cover letter as PDFs,
-and checks every statement against your profile. Statements that cannot be verified are
-removed and listed in report.md.
-
-The job offer can be a markdown file or an http(s) URL.`,
-		Args: cobra.NoArgs,
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if job == "" {
 				return errors.New("--job is required (markdown file or URL)")
