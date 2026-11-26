@@ -55,7 +55,13 @@ func plainText(cs []flatClaim) string {
 	for i, c := range cs {
 		parts[i] = c.Plain
 	}
-	return " " + normalize(strings.Join(parts, " ")) + " "
+	return " " + keywordTokens(strings.Join(parts, " ")) + " "
+}
+
+// keywordTokens normalizes text for keyword matching, where a slash separates
+// words, as an ATS reads it: "Linux/Bash" names both Linux and Bash.
+func keywordTokens(s string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(normalize(s), "/", " ")), " ")
 }
 
 // countBullets returns how many experience and project bullets the CV has and
@@ -76,7 +82,7 @@ func countBullets(d *Documents) (total, unchanged int) {
 
 func appearsIn(hay string, k KeyTerm) bool {
 	for _, f := range k.forms() {
-		if n := normalize(f); n != "" && strings.Contains(hay, " "+n+" ") {
+		if n := keywordTokens(f); n != "" && strings.Contains(hay, " "+n+" ") {
 			return true
 		}
 	}
@@ -97,7 +103,8 @@ type keywordGap struct {
 // shows it used in work (its evidence is outside the Skills section): the CV
 // then has a bullet it can name the keyword in. A keyword whose only evidence
 // is the profile's Skills section cannot be placed in a bullet truthfully, so
-// it is left alone.
+// it is left alone. Neither is a missing keyword whose only evidence is the
+// Education section (a course name): it is reported but not asked for.
 func keywordStatus(prof *profile.Profile, docs *Documents, a JobAnalysis, support []KeywordSupport) (ATS, map[string]keywordGap) {
 	var out ATS
 	out.Bullets, out.Unchanged = countBullets(docs)
@@ -118,14 +125,18 @@ func keywordStatus(prof *profile.Profile, docs *Documents, a JobAnalysis, suppor
 			// no verdict at all: say nothing
 		case appearsIn(hay, k):
 			out.Present = append(out.Present, k.Term)
-			onlySkill := prof.InSkills(ev)
-			if !appearsIn(bullets, k) && !onlySkill && out.Bullets > 0 {
+			noWork := prof.InSkills(ev) || prof.InEducation(ev)
+			if !appearsIn(bullets, k) && !noWork && out.Bullets > 0 {
 				out.NotInBullets = append(out.NotInBullets, k.Term)
 				gaps[k.Term] = keywordGap{Evidence: ev, InCV: true}
 			}
 		default:
 			out.Missing = append(out.Missing, k.Term)
-			gaps[k.Term] = keywordGap{Evidence: ev}
+			// Coursework is not a skill: asking for it in a Skills line or a
+			// bullet only produces a claim the fact-checker rejects.
+			if !prof.InEducation(ev) {
+				gaps[k.Term] = keywordGap{Evidence: ev}
+			}
 		}
 	}
 	return out, gaps

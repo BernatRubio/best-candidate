@@ -35,7 +35,7 @@ The product invariant is honesty: every statement about the candidate must be ba
 - `review.go` (`draftReview`) holds everything the program checks and fixes itself, and decides their order:
   - `Prepare` runs after every tailoring call and sorts degrees before any claim ref is taken.
   - `Review` combines quote grounding, rule checks and the fact-checker's verdicts into `findings` (issues, repeated courses, keyword gaps).
-  - `GiveUp` drops the issues that persist.
+  - `GiveUp` drops the issues that persist. A flagged Skills line first loses only the items the profile's Skills section does not list (`salvage.go`), and required keywords the removals took out are reported as warnings.
   - `Finalize` grounds identity, rankings and links, cleans titles, and fills empty Skills/Languages from the profile.
 
   ATS is computed last, in `Run`, and refreshed by `render.Build` after the one-page cuts (`Result.RefreshATS`).

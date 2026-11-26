@@ -37,6 +37,8 @@ type findings struct {
 	// order. The writer cannot fix them, so they are not sent for repair: they
 	// are verified again and dropped if they never get a verdict.
 	Unreviewed []string
+
+	support []KeywordSupport // the fact-checker's keyword verdicts
 }
 
 func (f findings) clean() bool {
@@ -98,7 +100,7 @@ func (r *draftReview) Review(d *Documents, rep VerificationReport) findings {
 	}
 
 	_, gaps := keywordStatus(r.prof, d, r.analysis, rep.Keywords)
-	return findings{Issues: issues, Courses: duplicateCourseIssues(d, r.catalog), Gaps: gaps, Unreviewed: unreviewed}
+	return findings{Issues: issues, Courses: duplicateCourseIssues(d, r.catalog), Gaps: gaps, Unreviewed: unreviewed, support: rep.Keywords}
 }
 
 // problems is the repair note for the writer: every flagged claim, in
@@ -123,8 +125,10 @@ func (f findings) problems(d *Documents) string {
 // missingKeywords is the repair note for supported keywords the CV under-uses.
 func (f findings) missingKeywords(a JobAnalysis) string { return missingKeywordsList(a, f.Gaps) }
 
-// GiveUp ends the repair rounds: flagged and unreviewed claims are removed and
-// repeated courses deduplicated.
+// GiveUp ends the repair rounds: Skills lines are cut down to the items the
+// profile lists, the remaining flagged and unreviewed claims are removed, and
+// repeated courses deduplicated. Required keywords that the removals took out
+// of the CV are reported.
 func (r *draftReview) GiveUp(d *Documents, f findings) ([]Dropped, []string) {
 	issues := make(map[string]string, len(f.Issues)+len(f.Unreviewed))
 	for id, reason := range f.Issues {
@@ -133,8 +137,11 @@ func (r *draftReview) GiveUp(d *Documents, f findings) ([]Dropped, []string) {
 	for _, id := range f.Unreviewed {
 		issues[id] = notReviewed
 	}
-	dropped := drop(d, issues)
-	return dropped, dedupeCoursework(d, r.catalog)
+	before := cvText(d)
+	dropped := salvageSkills(r.prof, d, issues)
+	dropped = append(dropped, drop(d, issues)...)
+	warnings := dedupeCoursework(d, r.catalog)
+	return dropped, append(warnings, lostKeywords(r.prof, r.analysis, f.support, before, cvText(d))...)
 }
 
 // Finalize applies the fixes that need no model: identity, rankings and links

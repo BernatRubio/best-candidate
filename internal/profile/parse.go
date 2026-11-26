@@ -73,6 +73,13 @@ func (p *Profile) InSkills(quote string) bool {
 	return q != "" && strings.Contains(" "+Normalize(strings.Join(p.skills, "\n"))+" ", " "+q+" ")
 }
 
+// InEducation reports whether quote lies inside the Education section (degrees
+// and the courses taken), as opposed to work, projects or skills.
+func (p *Profile) InEducation(quote string) bool {
+	q := Normalize(quote)
+	return q != "" && strings.Contains(" "+Normalize(strings.Join(p.education, "\n"))+" ", " "+q+" ")
+}
+
 // Skills returns the "- Category: a, b, c" bullets of the Skills section.
 func (p *Profile) Skills() []Item { return items(p.skills) }
 
