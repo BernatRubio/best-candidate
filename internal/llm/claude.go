@@ -26,7 +26,7 @@ func (c *ClaudeCLI) Name() string {
 // disabled. The CLI validates the answer against req.Schema.
 func (c *ClaudeCLI) GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error) {
 	args := []string{"-p", "--output-format", "json", "--no-session-persistence",
-		"--tools", "", "--strict-mcp-config", "--disable-slash-commands",
+		"--safe-mode", "--tools", "", "--strict-mcp-config", "--disable-slash-commands",
 		"--system-prompt", req.System, "--json-schema", string(req.Schema)}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
