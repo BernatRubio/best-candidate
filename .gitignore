@@ -8,6 +8,7 @@ out/
 # Personal data and secrets
 .env
 profile.md
+offers/
 
 # Agent tooling
 .agents/
