@@ -42,7 +42,7 @@ Rewrite every bullet you keep: lead with the part that matches the offer, in the
 - `details`: first a line "Relevant coursework: ..." with the 5 to 8 courses of THAT degree most relevant to the job, and nothing else on that line (no parentheses, no remarks). Then at most two lines, one fact each (for example the language of instruction, or high grades in relevant courses).
 - Each entry stands on its own. Never refer to another entry ("also", "same as above", "both degrees"); repeat a shared fact in each entry instead.
 
-**Skills.** Required whenever the profile lists skills. One line per category, "Category: item, item", with conventional category names ("Programming Languages", "Databases", "Tools"), the most relevant categories and items first, irrelevant skills omitted. Keep any level the profile states below working knowledge ("Kubernetes (basic)"); never raise or drop it.
+**Skills.** Required whenever the profile lists skills. One line per category, "Category: item, item", with conventional category names ("Programming Languages", "Databases", "Tools"), the most relevant categories and items first. List only skills that match an offer keyword, plus the first two items of the profile's Programming line, which always appear; omit every other skill. Keep any level the profile states below working knowledge ("Kubernetes (basic)"); never raise or drop it.
 
 **Languages.** Required whenever the profile lists spoken languages. One item per language, "Name (level)", nothing else.
 
