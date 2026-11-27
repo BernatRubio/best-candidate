@@ -13,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	bestcandidate "github.com/BernatRubio/best-candidate"
-	"github.com/BernatRubio/best-candidate/internal/dotenv"
 	"github.com/BernatRubio/best-candidate/internal/joboffer"
 	"github.com/BernatRubio/best-candidate/internal/llm"
 	"github.com/BernatRubio/best-candidate/internal/profile"
@@ -22,11 +21,6 @@ import (
 )
 
 func main() {
-	// Settings such as BC_MODEL may live in a .env file in the folder the
-	// command is run from; variables already set in the shell take precedence.
-	if err := dotenv.Load(".env"); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: could not read .env:", err)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
