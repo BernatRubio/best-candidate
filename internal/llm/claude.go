@@ -12,14 +12,19 @@ import (
 // ClaudeCLI runs the Claude Code CLI in print mode, so calls use the logged-in
 // Claude plan instead of an API key.
 type ClaudeCLI struct {
-	Model string // optional: the CLI's default model when empty
+	Model  string // optional: the CLI's default model when empty
+	Effort string // optional: the CLI's default effort when empty
 }
 
 func (c *ClaudeCLI) Name() string {
-	if c.Model == "" {
-		return "claude"
+	name := "claude"
+	if c.Model != "" {
+		name += " " + c.Model
 	}
-	return "claude " + c.Model
+	if c.Effort != "" {
+		name += " " + c.Effort + " effort"
+	}
+	return name
 }
 
 // GenerateJSON runs one `claude -p` call with every tool, MCP server and skill
@@ -30,6 +35,9 @@ func (c *ClaudeCLI) GenerateJSON(ctx context.Context, req Request) (json.RawMess
 		"--system-prompt", req.System, "--json-schema", string(req.Schema)}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
+	}
+	if c.Effort != "" {
+		args = append(args, "--effort", c.Effort)
 	}
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Stdin = strings.NewReader(req.User)

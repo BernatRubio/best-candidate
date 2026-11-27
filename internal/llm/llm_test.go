@@ -42,13 +42,13 @@ func TestClaudeCLI(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	c := &ClaudeCLI{Model: "sonnet"}
+	c := &ClaudeCLI{Model: "sonnet", Effort: "high"}
 	out, err := c.GenerateJSON(context.Background(), Request{System: "be honest", User: "hello", Schema: json.RawMessage(`{"type":"object"}`)})
 	if err != nil || string(out) != `{"ok":true}` {
 		t.Fatalf("out=%s err=%v", out, err)
 	}
 	args, _ := os.ReadFile(filepath.Join(dir, "args"))
-	for _, want := range []string{"--tools  --strict-mcp-config --disable-slash-commands", "--system-prompt be honest", `--json-schema {"type":"object"}`, "--model sonnet"} {
+	for _, want := range []string{"--tools  --strict-mcp-config --disable-slash-commands", "--system-prompt be honest", `--json-schema {"type":"object"}`, "--model sonnet", "--effort high"} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("args %q miss %q", args, want)
 		}

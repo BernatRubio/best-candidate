@@ -22,7 +22,7 @@ Running the tool needs the `claude` CLI on PATH, logged in (calls use the Claude
 ./best-candidate render out/<folder>                  # rebuild PDFs after editing cv.json/letter.json/*.typ
 ```
 
-`--model` defaults to `opus` (`sonnet`, ... also work). A run makes one call.
+`--model` defaults to `opus` (`sonnet`, ... also work). `--effort` (`low`, `medium`, `high`, `xhigh`, `max`) is passed through to `claude`; empty uses its default. A run makes one call.
 
 ## Architecture
 
