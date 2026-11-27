@@ -23,6 +23,8 @@ func (c *ClaudeCLI) Name() string {
 	}
 	if c.Effort != "" {
 		name += " " + c.Effort + " effort"
+	} else {
+		name += " (default effort)"
 	}
 	return name
 }
