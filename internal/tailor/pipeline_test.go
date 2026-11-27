@@ -74,6 +74,25 @@ func TestRunMakesOneCallAndDecodes(t *testing.T) {
 	}
 }
 
+func TestRunWarnsOnMissingSupportedKeywords(t *testing.T) {
+	r := reply("en")
+	r.Keywords = []Keyword{
+		{Term: "Go", Required: true, Supported: true},
+		{Term: "PostgreSQL", Supported: true},
+		{Term: "Kubernetes", Required: true},
+	}
+	res, err := Run(context.Background(), llm.NewFake(llm.Reply(r)), loadProfile(t), testOffer, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Keywords) != 3 || res.Keywords[0].Count != 1 || res.Keywords[1].Count != 0 {
+		t.Fatalf("keywords = %+v", res.Keywords)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], `"PostgreSQL"`) {
+		t.Fatalf("warnings = %q, want one about PostgreSQL", res.Warnings)
+	}
+}
+
 func TestRunLanguage(t *testing.T) {
 	for _, tc := range []struct{ flag, model, want string }{
 		{"CA", "en", "ca"}, // the flag wins

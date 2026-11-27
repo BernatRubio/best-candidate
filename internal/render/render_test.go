@@ -297,3 +297,37 @@ func TestReport(t *testing.T) {
 		}
 	}
 }
+
+func TestReportKeywords(t *testing.T) {
+	res := sample()
+	if strings.Contains(Report(res), "## Keywords") {
+		t.Fatal("keyword section without keywords")
+	}
+	res.Keywords = []tailor.KeywordHit{
+		{Keyword: tailor.Keyword{Term: "Go", Required: true, Supported: true}, Count: 2},
+		{Keyword: tailor.Keyword{Term: "Docker", Supported: true}},
+		{Keyword: tailor.Keyword{Term: "AWS"}},
+		{Keyword: tailor.Keyword{Term: "Kubernetes", Required: true}},
+	}
+	r := Report(res)
+	for _, want := range []string{
+		"covers 1/2 supported keywords (1/1 required)",
+		"### Covered", "- Go (×2) — required",
+		"### Missed", "- Docker\n",
+		"### Gaps", "- Kubernetes — required\n- AWS\n",
+	} {
+		if !strings.Contains(r, want) {
+			t.Errorf("report lacks %q:\n%s", want, r)
+		}
+	}
+}
+
+func TestRecountAfterCut(t *testing.T) {
+	res := sample()
+	res.Keywords = []tailor.KeywordHit{{Keyword: tailor.Keyword{Term: "facturació", Supported: true}, Count: 1}}
+	res.Docs.CV.Experience[0].Bullets = nil
+	recount(res)
+	if res.Keywords[0].Count != 0 || len(res.Warnings) == 0 || !strings.Contains(res.Warnings[len(res.Warnings)-1], "after cutting") {
+		t.Fatalf("keywords = %+v, warnings = %q", res.Keywords, res.Warnings)
+	}
+}

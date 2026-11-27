@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-The project was deliberately cut back to a barebone version so the user can grow it by hand. Keep changes small and don't reintroduce removed features (other providers, fact-checking, repair loops, ATS scoring) unless asked.
+The project was deliberately cut back to a barebone version so the user can grow it by hand. Keep changes small and don't reintroduce removed features (other providers, fact-checking, repair loops, weighted ATS scores) unless asked.
 
 ## Commands
 
@@ -33,8 +33,8 @@ Goal: every statement about the candidate is backed by a verbatim quote from the
 - **`internal/profile`**: loads the markdown profile and strips HTML comments (they are notes, never evidence).
 - **`internal/joboffer`**: reads the offer from a file or fetches a URL (readability + html-to-markdown).
 - **`internal/llm`**: `Provider` is the seam (`GenerateJSON(ctx, Request) → json.RawMessage`). The only adapter is `ClaudeCLI`; it runs `claude -p --json-schema` with all tools, MCP servers and skills disabled, and reads `structured_output`. `Fake` is the scripted test double. `SchemaFor` derives the JSON schema from Go types, so `jsonschema` tag descriptions are part of the prompt. `ExtractJSON` tolerates code fences, prose and leaked `<think>` blocks.
-- **`internal/tailor`**: one model call. `Run` sends `prompts/tailor.md` (embedded) with the profile, offer and language, and decodes `output` (company, role, language, CV, letter). `schema.go` holds the JSON types.
-- **`internal/render`**: writes `cv.json`, `letter.json` and the Typst templates (`templates/`, embedded) into `out/<company>-<role>-<date>/` and compiles them with the `typst` CLI. `Fit` keeps the CV to one page by cutting the last item of each list, with the page counter passed in so it can be tested without typst. `report.go` writes `report.md`.
+- **`internal/tailor`**: one model call. `Run` sends `prompts/tailor.md` (embedded) with the profile, offer and language, and decodes `output` (keywords, company, role, language, CV, letter); `keywords` comes first so the model settles them before writing. `coverage.go` counts each keyword in the CV text (case-insensitive, whole word) and warns about supported ones the CV misses; no retry. `schema.go` holds the JSON types.
+- **`internal/render`**: writes `cv.json`, `letter.json` and the Typst templates (`templates/`, embedded) into `out/<company>-<role>-<date>/` and compiles them with the `typst` CLI. `Fit` keeps the CV to one page by cutting the last item of each list, with the page counter passed in so it can be tested without typst; after cuts `Build` recounts keywords. `report.go` writes `report.md` (keyword covered / missed / gaps, warnings).
 
 ## Testing conventions
 

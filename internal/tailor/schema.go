@@ -87,12 +87,23 @@ type Documents struct {
 	Letter Letter `json:"letter"`
 }
 
+// Keyword is a term from the offer that an applicant tracking system would
+// match, plus whether the profile backs it.
+type Keyword struct {
+	Term      string   `json:"term" jsonschema:"description=The keyword exactly as the offer writes it (spelling and capitalisation)"`
+	Required  bool     `json:"required" jsonschema:"description=true if the offer lists it as a requirement rather than a nice-to-have"`
+	Supported bool     `json:"supported" jsonschema:"description=true only if the profile shows this exact thing; a related technology does not count"`
+	Sources   []string `json:"sources" jsonschema:"description=Verbatim profile quotes that show it; empty when not supported"`
+}
+
 // output is what the model returns: the documents plus what the program needs
-// to name the output folder and pick the language.
+// to name the output folder and pick the language. Keywords come first so the
+// model settles them before writing the documents.
 type output struct {
-	Company  string `json:"company" jsonschema:"description=Hiring company name; empty string if the offer does not say"`
-	Role     string `json:"role" jsonschema:"description=Job title being hired for"`
-	Language string `json:"language" jsonschema:"description=ISO 639-1 code of the language the documents are written in, e.g. en or es or ca"`
-	CV       CV     `json:"cv"`
-	Letter   Letter `json:"letter"`
+	Keywords []Keyword `json:"keywords" jsonschema:"description=10 to 25 technologies and tools and methods and domain terms from the offer; no soft skills or generic words"`
+	Company  string    `json:"company" jsonschema:"description=Hiring company name; empty string if the offer does not say"`
+	Role     string    `json:"role" jsonschema:"description=Job title being hired for"`
+	Language string    `json:"language" jsonschema:"description=ISO 639-1 code of the language the documents are written in, e.g. en or es or ca"`
+	CV       CV        `json:"cv"`
+	Letter   Letter    `json:"letter"`
 }

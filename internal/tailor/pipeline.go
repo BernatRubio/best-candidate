@@ -28,6 +28,7 @@ type Result struct {
 	Role     string
 	Lang     string
 	Docs     Documents
+	Keywords []KeywordHit
 	Warnings []string
 }
 
@@ -68,11 +69,20 @@ func Run(ctx context.Context, p llm.Provider, prof *profile.Profile, offer strin
 	if lang == "" {
 		lang = "en"
 	}
+	hits := Coverage(out.Keywords, out.CV)
+	var warnings []string
+	for _, h := range hits {
+		if h.Supported && h.Count == 0 {
+			warnings = append(warnings, MissingWarning(h))
+		}
+	}
 	return &Result{
-		Company: out.Company,
-		Role:    out.Role,
-		Lang:    lang,
-		Docs:    Documents{CV: out.CV, Letter: out.Letter},
+		Company:  out.Company,
+		Role:     out.Role,
+		Lang:     lang,
+		Docs:     Documents{CV: out.CV, Letter: out.Letter},
+		Keywords: hits,
+		Warnings: warnings,
 	}, nil
 }
 

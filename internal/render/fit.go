@@ -154,6 +154,22 @@ func Fit(cv *tailor.CV, pages func() (int, error)) (int, []string, error) {
 	}
 }
 
+// recount refreshes the keyword counts after cuts and warns about every
+// supported keyword a cut removed from the CV.
+func recount(res *tailor.Result) {
+	kws := make([]tailor.Keyword, len(res.Keywords))
+	for i, h := range res.Keywords {
+		kws[i] = h.Keyword
+	}
+	hits := tailor.Coverage(kws, res.Docs.CV)
+	for i, h := range hits {
+		if h.Supported && h.Count == 0 && res.Keywords[i].Count > 0 {
+			res.Warnings = append(res.Warnings, tailor.MissingWarning(h)+" after cutting it to one page")
+		}
+	}
+	res.Keywords = hits
+}
+
 // BuildResult describes what Build produced.
 type BuildResult struct {
 	CVPages     int
@@ -184,6 +200,9 @@ func Build(dir string, res *tailor.Result, now time.Time) (BuildResult, error) {
 	out.CVPages, out.Trimmed = n, cuts
 	for _, c := range cuts {
 		res.Warnings = append(res.Warnings, "to keep the CV on one page: "+c)
+	}
+	if len(cuts) > 0 {
+		recount(res)
 	}
 	if n > 1 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("the CV is %d pages and nothing more can be cut automatically; shorten cv.json by hand and run render", n))

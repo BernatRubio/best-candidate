@@ -21,8 +21,8 @@ Every `text` about the candidate has `sources`: one or more short quotes copied 
 
 A CV that just reproduces the profile has failed. A reader should see within seconds why this candidate fits.
 
-**Keywords and bullets.** An applicant tracking system matches the offer's literal words first, then a person reads the CV. First find the offer's keywords: the technologies, tools, methods and domain terms an applicant tracking system would match, especially those in its requirements. For each keyword the profile supports:
-- Use the offer's exact form (spelling, capitalisation) at least once. If the profile names the same thing differently ("Postgres"), write the offer's name. A related but different technology is not the same thing (React is not Next.js, Docker is not Kubernetes): if the profile does not show the keyword itself, leave it out.
+**Keywords and bullets.** An applicant tracking system matches the offer's literal words first, then a person reads the CV. Before writing anything, fill `keywords` with 10 to 25 of the offer's keywords: the technologies, tools, methods and domain terms an applicant tracking system would match, especially those in its requirements. No soft skills or generic words ("communication", "team player"). For each, `term` is the offer's exact form, `required` says whether the offer requires it, and `supported` is true only if the profile shows that exact thing, with the quotes in `sources`. The goal is that every supported keyword appears in the CV; an unsupported keyword never appears in the CV or the letter, however important it is. For each supported keyword:
+- Use the offer's exact form (spelling, capitalisation) at least once in the CV. If the profile names the same thing differently ("Postgres"), write the offer's name. A related but different technology is not the same thing (React is not Next.js, Docker is not Kubernetes): if the profile does not show the keyword itself, leave it out.
 - Put it in a Skills line and, when the profile shows it used, in the bullet about that work. Put 3 to 5 of the most important supported required keywords in the summary.
 - When the offer uses an acronym and its full form, write "Full Form (ACRONYM)" the first time.
 - Use each keyword at most three times in the CV, only in true, natural sentences. Never copy the offer's sentences.
@@ -58,7 +58,7 @@ Rewrite every bullet you keep: lead with the part that matches the offer, in the
 
 250 to 350 words, three or four paragraphs, written for this company and role.
 1. **Opening.** The role, the company, and one specific thing the offer says about the company, product or team. State the interest plainly ("I am interested in ...", "I would like to contribute to ...").
-2. **Contribution (one or two paragraphs).** Pick the three most important responsibilities or requirements of the offer. For each, name concrete experience from the profile (a project, a task, a course) and how it would let the candidate contribute. Be specific; do not list everything.
+2. **Contribution (one or two paragraphs).** Pick the three most important responsibilities or requirements of the offer. For each, name concrete experience from the profile (a project, a task, a course) and how it would let the candidate contribute, using the offer's terms for the most important supported required keywords where they fit naturally. Be specific; do not list everything.
 3. **Close.** Short and forward-looking; offer to discuss the application.
 
 Interest is allowed only as applying implies it: interest in what the offer describes and in contributing to it. No invented personal reasons, product history or emotions, and nothing about the company beyond the offer, unless the profile states such an interest. Do not mention requirements the profile does not show. Avoid clichés; match the tone of the offer. `recipient` is a plain addressee line such as "Acme Hiring Team". Greet a named person only if the offer names one. Close with a plain sign-off and the candidate's name.
@@ -71,6 +71,6 @@ Interest is allowed only as applying implies it: interest in what the offer desc
 
 - Every source is a verbatim profile quote.
 - No statement is stronger than the profile.
-- Supported required keywords appear in the offer's exact form.
+- Every supported keyword appears in the CV in the offer's exact form; no unsupported keyword appears anywhere.
 - No entry refers to another.
 - The CV fits one page; everything is in the <language> language.
