@@ -14,7 +14,7 @@ go test ./internal/tailor -run TestRunLanguage -v # one test
 
 Render tests that compile PDFs skip themselves when `typst` is not installed (looked up on PATH, then `~/.cargo/bin/typst`).
 
-Running the tool needs the `claude` CLI on PATH, logged in (calls use the Claude plan, no API key). Env vars can also come from a `.env` file in the working directory (shell wins):
+Running the tool needs the `claude` CLI on PATH, logged in (calls use the Claude plan, no API key). Nothing is read from env vars or `.env`:
 
 ```sh
 ./best-candidate init                                 # writes profile.md from examples/profile.example.md
@@ -22,13 +22,13 @@ Running the tool needs the `claude` CLI on PATH, logged in (calls use the Claude
 ./best-candidate render out/<folder>                  # rebuild PDFs after editing cv.json/letter.json/*.typ
 ```
 
-`--model`/`BC_MODEL` is optional (`sonnet`, `opus`, ...; the CLI's default otherwise). A run makes one call.
+`--model` defaults to `opus` (`sonnet`, ... also work). A run makes one call.
 
 ## Architecture
 
 Goal: every statement about the candidate is backed by a verbatim quote from the profile (`sources` on each `Claim`). The prompt asks for this; nothing verifies it yet.
 
-**Flow** (`cmd/best-candidate/main.go`): `profile.Load` → `joboffer.Load` → `llm.FromEnv` (+ `WithProgress`) → `tailor.Run` → `render.Build`.
+**Flow** (`cmd/best-candidate/main.go`): `profile.Load` → `joboffer.Load` → `llm.ClaudeCLI` (+ `WithProgress`) → `tailor.Run` → `render.Build`.
 
 - **`internal/profile`**: loads the markdown profile and strips HTML comments (they are notes, never evidence).
 - **`internal/joboffer`**: reads the offer from a file or fetches a URL (readability + html-to-markdown).

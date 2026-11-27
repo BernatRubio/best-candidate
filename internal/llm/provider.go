@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -23,14 +22,6 @@ type Request struct {
 type Provider interface {
 	Name() string
 	GenerateJSON(ctx context.Context, req Request) (json.RawMessage, error)
-}
-
-// FromEnv builds the Claude CLI provider. BC_MODEL overrides the flag value.
-func FromEnv(model string) Provider {
-	if m := os.Getenv("BC_MODEL"); m != "" {
-		model = m
-	}
-	return &ClaudeCLI{Model: model}
 }
 
 // ExtractJSON pulls one JSON value out of model text that may be wrapped in a

@@ -18,9 +18,6 @@ cd best-candidate
 go build -o best-candidate ./cmd/best-candidate
 ```
 
-Settings such as `BC_MODEL` can go in a `.env` file in the folder you run the command from. It is
-git-ignored, and variables already set in the shell take precedence.
-
 ## Usage
 
 Create your profile once and fill it in:
@@ -40,7 +37,7 @@ lines, and write a class ranking such as `Top 10%` on its own line. The template
 Then generate documents for each offer, given as a markdown file or a URL:
 
 ```sh
-./best-candidate generate --model nvidia/nemotron-3-ultra-550b-a55b:free offer.md
+./best-candidate generate --model sonnet offer.md
 ./best-candidate generate https://example.com/jobs/123
 ```
 
@@ -51,7 +48,7 @@ Pages that need a login, such as LinkedIn, cannot be fetched: save the text to a
 | `--profile` | profile path (default `profile.md`) |
 | `--lang` | `auto` (default) follows the offer's language; or `en`, `es`, `ca`, ... |
 | `--out` | output folder (default `out`) |
-| `--model` | Claude model, e.g. `sonnet` or `opus` (default: the CLI's; env `BC_MODEL`) |
+| `--model` | Claude model, e.g. `opus` or `sonnet` (default `opus`) |
 
 ## Output
 

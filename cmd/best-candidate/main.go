@@ -82,7 +82,7 @@ func generateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			provider := llm.WithProgress(llm.FromEnv(model), logf)
+			provider := llm.WithProgress(&llm.ClaudeCLI{Model: model}, logf)
 			logf("using %s", provider.Name())
 
 			res, err := tailor.Run(ctx, provider, prof, offer, tailor.Options{
@@ -113,7 +113,7 @@ func generateCmd() *cobra.Command {
 	f.StringVar(&profilePath, "profile", "profile.md", "path to your master profile")
 	f.StringVar(&lang, "lang", "auto", "output language (ISO 639-1, e.g. en, es, ca) or auto to follow the offer")
 	f.StringVar(&outDir, "out", "out", "directory for generated applications")
-	f.StringVar(&model, "model", "", "Claude model, e.g. sonnet or opus (default: the claude CLI's; env BC_MODEL overrides)")
+	f.StringVar(&model, "model", "opus", "Claude model, e.g. opus or sonnet")
 	return cmd
 }
 
