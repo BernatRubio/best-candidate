@@ -32,9 +32,8 @@ func ExtractJSON(text string) (json.RawMessage, error) {
 	if i := strings.LastIndex(s, "</think>"); i >= 0 {
 		s = strings.TrimSpace(s[i+len("</think>"):])
 	}
-	if strings.HasPrefix(s, "```") {
-		s = strings.TrimPrefix(s, "```")
-		s = strings.TrimPrefix(s, "json")
+	if rest, ok := strings.CutPrefix(s, "```"); ok {
+		s = strings.TrimPrefix(rest, "json")
 		if i := strings.LastIndex(s, "```"); i >= 0 {
 			s = s[:i]
 		}
@@ -43,6 +42,8 @@ func ExtractJSON(text string) (json.RawMessage, error) {
 	if json.Valid([]byte(s)) {
 		return json.RawMessage(s), nil
 	}
+	// Last resort: the object is surrounded by prose ("Here it is: {...} Hope
+	// this helps."). Try the span from the first "{" to the last "}".
 	if i, j := strings.Index(s, "{"), strings.LastIndex(s, "}"); i >= 0 && j > i && json.Valid([]byte(s[i:j+1])) {
 		return json.RawMessage(s[i : j+1]), nil
 	}
